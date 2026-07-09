@@ -17,7 +17,7 @@ chmFile *chm = chm_open(NULL, data, len);   /* data must outlive chm */
 struct chm_entry entry;
 if (chm_resolve_object(chm, "/foo/bar.html", &ui) == CHM_RESOLVE_SUCCESS) {
     uint8_t *buf = ...;
-    chm_retrieve_object(chm, &ui, buf, 0, ui.length);
+    chm_retrieve_object(chm, &entry, buf);  /* buf must be at least entry.length bytes */
 }
 chm_enumerate(chm, CHM_ENUMERATE_FILES | CHM_ENUMERATE_NORMAL, my_enum, ctx);
 chm_close(chm);

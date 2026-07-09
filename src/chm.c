@@ -390,6 +390,9 @@ static int parse_cword(uint8_t** pEntry, uint8_t* end, uint64_t* result);
 static void skip_PMGL_entry_data(uint8_t** pEntry, uint8_t* end);
 static int parse_PMGL_entry(chm_ctx *ctx, uint8_t** pEntry, uint8_t* end, struct chm_entry* entry);
 
+/* forward decl for retrieve helper (defined after open logic) */
+static int64_t retrieve_object_range(chm_ctx *ctx, struct chm_entry* entry, uint8_t* buf, uint64_t addr, int64_t len);
+
 /* collect every unit in the archive into ctx->units / ctx->unit_ptrs */
 static int collect_units(chm_ctx *ctx) {
     struct chmDirSession session;
@@ -596,7 +599,7 @@ bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
      */
     sremain = 8;
     sbufpos = sbuffer;
-    if (chm_retrieve_object(ctx, &uiSpan, sbuffer,
+    if (retrieve_object_range(ctx, &uiSpan, sbuffer,
                             0, sremain) != sremain                        ||
         !_unmarshal_uint64(&sbufpos, &sremain, &ctx->span))
     {
@@ -619,7 +622,7 @@ bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
     if (ctx->compression_enabled) {
         sremain = _CHM_LZXC_RESETTABLE_V1_LEN;
         sbufpos = sbuffer;
-        ok = chm_retrieve_object(ctx, &ctx->rt_unit, sbuffer, 0, sremain) == sremain;
+        ok = retrieve_object_range(ctx, &ctx->rt_unit, sbuffer, 0, sremain) == sremain;
         if (ok) {
             ok = _unmarshal_lzxc_reset_table(&sbufpos, &sremain, &ctx->reset_table);
         }
@@ -637,7 +640,7 @@ bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
         }
 
         sbufpos = sbuffer;
-        if (chm_retrieve_object(ctx, &uiLzxc, sbuffer, 0, sremain) != sremain ||
+        if (retrieve_object_range(ctx, &uiLzxc, sbuffer, 0, sremain) != sremain ||
             !_unmarshal_lzxc_control_data(&sbufpos, &sremain, &ctlData)) {
             ctx->compression_enabled = 0;
         } else /* SumatraPDF: prevent division by zero */
@@ -1173,8 +1176,8 @@ static int64_t decompress_region(chm_ctx *ctx, uint8_t* buf, uint64_t start, int
     return nLen;
 }
 
-/* retrieve (part of) an object */
-int64_t chm_retrieve_object(chm_ctx *ctx, struct chm_entry* entry, uint8_t* buf, uint64_t addr, int64_t len) {
+/* internal: retrieve a (possibly partial) range of an object */
+static int64_t retrieve_object_range(chm_ctx *ctx, struct chm_entry* entry, uint8_t* buf, uint64_t addr, int64_t len) {
     uint64_t offset;
 
     /* must be valid file handle */
@@ -1221,6 +1224,12 @@ int64_t chm_retrieve_object(chm_ctx *ctx, struct chm_entry* entry, uint8_t* buf,
 
         return total;
     }
+}
+
+/* retrieve an entire object from the archive */
+int64_t chm_retrieve_object(chm_ctx *ctx, struct chm_entry *entry, uint8_t *buf) {
+    if (!entry) return 0;
+    return retrieve_object_range(ctx, entry, buf, 0, entry->length);
 }
 
 /* enumeration API removed; units are collected into ctx->units at open time */

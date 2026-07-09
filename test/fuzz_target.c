@@ -19,8 +19,14 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     chm_resolve_object(ctx, "/", &ui);
     chm_resolve_object(ctx, "/#SYSTEM", &ui);
 
-    uint8_t buf[256];
-    chm_retrieve_object(ctx, &ui, buf, 0, sizeof(buf));
+    /* retrieve full object (partial reads no longer supported) */
+    if (ui.length > 0 && ui.length <= (1 << 20)) {
+        uint8_t *tmp = malloc(ui.length);
+        if (tmp) {
+            chm_retrieve_object(ctx, &ui, tmp);
+            free(tmp);
+        }
+    }
 
     /* get all units */
     struct chm_entry **units = NULL;

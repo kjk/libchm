@@ -67,9 +67,10 @@ struct chm_entry {
 #define CHM_RESOLVE_FAILURE (1)
 int chm_resolve_object(chm_ctx *ctx, const char *objPath, struct chm_entry *entry);
 
-/* retrieve part of an object from the archive */
-int64_t chm_retrieve_object(chm_ctx *ctx, struct chm_entry *entry, uint8_t *buf,
-                             uint64_t addr, int64_t len);
+/* retrieve an entire object from the archive.
+   The caller must provide a buffer of at least entry->length bytes.
+   Returns the number of bytes read (== entry->length on success) or 0 on failure. */
+int64_t chm_retrieve_object(chm_ctx *ctx, struct chm_entry *entry, uint8_t *buf);
 
 /* Return the number of entries and set *outEntries to an internal array of
    pointers to chm_entry (the array and all strings are owned by ctx
