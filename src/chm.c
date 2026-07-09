@@ -188,7 +188,10 @@ static int read_itsp_header(uint8_t **pData, unsigned int *pDataLen, struct chmI
     if (memcmp(dest->signature, "ITSP", 4) != 0) return 0;
     if (dest->version != 1) return 0;
     if (dest->header_len != _CHM_ITSP_V1_LEN) return 0;
-    if (dest->block_len == 0) return 0;
+    /* a directory block must hold at least a full PMGL page header; this also
+       guarantees the page buffer is >= 4 bytes for the marker memcmp before
+       read_pmgl_header/read_pmgi_header run */
+    if (dest->block_len < _CHM_PMGL_LEN) return 0;
     return 1;
 }
 
@@ -677,6 +680,9 @@ static uint8_t* find_in_PMGL(uint8_t* page_buf, uint32_t block_len, const char* 
         temp = cur;
         if (!parse_cword(&cur, end, &strLen)) return NULL;
         if (strLen == 0) return NULL;
+        /* the name must fit in the bytes remaining, else the compare below
+           would read past the page buffer */
+        if ((uint64_t)(end - cur) < strLen) return NULL;
 
         /* compare directly */
         if (strLen == strlen(objPath) &&
