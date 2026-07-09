@@ -515,6 +515,9 @@ static int parse_PMGL_entry(chm_ctx *ctx, uint8_t** pEntry, uint8_t* end, struct
     /* parse str len */
     if (!parse_cword(pEntry, end, &strLen)) return 0;
     if (strLen == 0) return 0;
+    /* the path can't be longer than the bytes remaining in the entry region;
+       reject before allocating so a bogus length can't request a huge buffer */
+    if ((uint64_t)(end - *pEntry) < strLen) return 0;
 
     /* allocate and parse path */
     entry->path = (char *)chm_alloc(ctx, (size_t)strLen + 1);
