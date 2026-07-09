@@ -385,10 +385,81 @@ static int dir_session_fetch(struct chmDirSession* s, int32_t page) {
     return dir_fetch_page(s->ctx, page, s->page_buf);
 }
 
-/* forward decls for helpers used by entry collector (defined later) */
-static int parse_cword(uint8_t** pEntry, uint8_t* end, uint64_t* result);
-static void skip_PMGL_entry_data(uint8_t** pEntry, uint8_t* end);
-static int parse_PMGL_entry(chm_ctx *ctx, uint8_t** pEntry, uint8_t* end, struct chm_entry* entry);
+/* skip a compressed dword */
+static void skip_cword(uint8_t** pEntry, uint8_t* end) {
+    while ((*pEntry < end) && *(*pEntry)++ >= 0x80);
+}
+
+/* skip the data from a PMGL entry */
+static void skip_PMGL_entry_data(uint8_t** pEntry, uint8_t* end) {
+    skip_cword(pEntry, end);
+    skip_cword(pEntry, end);
+    skip_cword(pEntry, end);
+}
+
+/* parse a compressed dword */
+static int parse_cword(uint8_t** pEntry, uint8_t* end, uint64_t* result) {
+    uint64_t accum = 0;
+    uint8_t temp = 0;
+
+    while (*pEntry < end) {
+        temp = *(*pEntry)++;
+        if (temp < 0x80) {
+            if (accum > (UINT64_MAX - temp) >> 7) return 0;
+            *result = (accum << 7) + temp;
+            return 1;
+        }
+        if (accum > (UINT64_MAX - (temp & 0x7f)) >> 7) return 0;
+        accum <<= 7;
+        accum += temp & 0x7f;
+    }
+
+    return 0;
+}
+
+/* parse a utf-8 string into an ASCII char buffer */
+static int parse_UTF8(uint8_t** pEntry, uint8_t* end, uint64_t count, char* path) {
+    /* XXX: implement UTF-8 support, including a real mapping onto
+     *      ISO-8859-1?  probably there is a library to do this?  As is
+     *      immediately apparent from the below code, I'm presently not doing
+     *      any special handling for files in which none of the strings contain
+     *      UTF-8 multi-byte characters.
+     */
+    if (*pEntry > end) return 0;
+    if ((uint64_t)(end - *pEntry) < count) return 0;
+    memcpy(path, *pEntry, (size_t)count);
+    path += count;
+    *pEntry += count;
+
+    *path = '\0';
+    return 1;
+}
+
+/* parse a PMGL entry into a chm_entry struct; allocates path via ctx.
+   return 1 on success. */
+static int parse_PMGL_entry(chm_ctx *ctx, uint8_t** pEntry, uint8_t* end, struct chm_entry* entry) {
+    uint64_t strLen;
+
+    /* parse str len */
+    if (!parse_cword(pEntry, end, &strLen)) return 0;
+    if (strLen == 0) return 0;
+
+    /* allocate and parse path */
+    entry->path = (char *)chm_alloc(ctx, (size_t)strLen + 1);
+    if (!entry->path) return 0;
+    if (!parse_UTF8(pEntry, end, strLen, entry->path)) {
+        chm_free(ctx, entry->path);
+        entry->path = NULL;
+        return 0;
+    }
+
+    /* parse info */
+    if (!parse_cword(pEntry, end, &strLen)) return 0;
+    entry->is_compressed = (bool)strLen;
+    if (!parse_cword(pEntry, end, &entry->start)) return 0;
+    if (!parse_cword(pEntry, end, &entry->length)) return 0;
+    return 1;
+}
 
 /* forward decl for retrieve helper (defined after open logic) */
 static int64_t retrieve_object_range(chm_ctx *ctx, struct chm_entry* entry, uint8_t* buf, uint64_t addr, int64_t len);
@@ -788,85 +859,6 @@ void chm_set_param(chm_ctx *ctx, int paramType, int paramVal) {
     }
 }
 
-/*
- * helper methods for chm_resolve_object
- */
-
-/* skip a compressed dword */
-static void skip_cword(uint8_t** pEntry, uint8_t* end) {
-    while ((*pEntry < end) && *(*pEntry)++ >= 0x80);
-}
-
-/* skip the data from a PMGL entry */
-static void skip_PMGL_entry_data(uint8_t** pEntry, uint8_t* end) {
-    skip_cword(pEntry, end);
-    skip_cword(pEntry, end);
-    skip_cword(pEntry, end);
-}
-
-/* parse a compressed dword */
-static int parse_cword(uint8_t** pEntry, uint8_t* end, uint64_t* result) {
-    uint64_t accum = 0;
-    uint8_t temp = 0;
-
-    while (*pEntry < end) {
-        temp = *(*pEntry)++;
-        if (temp < 0x80) {
-            if (accum > (UINT64_MAX - temp) >> 7) return 0;
-            *result = (accum << 7) + temp;
-            return 1;
-        }
-        if (accum > (UINT64_MAX - (temp & 0x7f)) >> 7) return 0;
-        accum <<= 7;
-        accum += temp & 0x7f;
-    }
-
-    return 0;
-}
-
-/* parse a utf-8 string into an ASCII char buffer */
-static int parse_UTF8(uint8_t** pEntry, uint8_t* end, uint64_t count, char* path) {
-    /* XXX: implement UTF-8 support, including a real mapping onto
-     *      ISO-8859-1?  probably there is a library to do this?  As is
-     *      immediately apparent from the below code, I'm presently not doing
-     *      any special handling for files in which none of the strings contain
-     *      UTF-8 multi-byte characters.
-     */
-    if (*pEntry > end) return 0;
-    if ((uint64_t)(end - *pEntry) < count) return 0;
-    memcpy(path, *pEntry, (size_t)count);
-    path += count;
-    *pEntry += count;
-
-    *path = '\0';
-    return 1;
-}
-
-/* parse a PMGL entry into a chm_entry struct; allocates path via ctx.
-   return 1 on success. */
-static int parse_PMGL_entry(chm_ctx *ctx, uint8_t** pEntry, uint8_t* end, struct chm_entry* entry) {
-    uint64_t strLen;
-
-    /* parse str len */
-    if (!parse_cword(pEntry, end, &strLen)) return 0;
-    if (strLen == 0) return 0;
-
-    /* allocate and parse path */
-    entry->path = (char *)chm_alloc(ctx, (size_t)strLen + 1);
-    if (!entry->path) return 0;
-    if (!parse_UTF8(pEntry, end, strLen, entry->path)) {
-        chm_free(ctx, entry->path);
-        entry->path = NULL;
-        return 0;
-    }
-
-    /* parse info */
-    if (!parse_cword(pEntry, end, &strLen)) return 0;
-    entry->is_compressed = (bool)strLen;
-    if (!parse_cword(pEntry, end, &entry->start)) return 0;
-    if (!parse_cword(pEntry, end, &entry->length)) return 0;
-    return 1;
-}
 
 /* find an exact entry in PMGL; return NULL if we fail.
    Compares directly without using fixed-size buffer. */
