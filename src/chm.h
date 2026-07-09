@@ -46,8 +46,7 @@ bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len);
 void chm_close(chm_ctx *ctx);
 
 /* methods for setting tuning parameters for particular file */
-#define CHM_PARAM_MAX_BLOCKS_CACHED 0
-void chm_set_param(chm_ctx *ctx, int paramType, int paramVal);
+
 
 /* ----- entries (files/directories inside the archive) ----- */
 

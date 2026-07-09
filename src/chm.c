@@ -743,9 +743,6 @@ bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
         }
     }
 
-    /* initialize cache */
-    chm_set_param(ctx, CHM_PARAM_MAX_BLOCKS_CACHED, CHM_MAX_BLOCKS_CACHED);
-
     return true;
 }
 
@@ -755,16 +752,6 @@ void chm_close(chm_ctx *ctx)
     if (!ctx) return;
     if (ctx->lzx_state) LZXteardown(ctx->lzx_state);
     ctx->lzx_state = NULL;
-
-    if (ctx->cache_blocks) {
-        for (int i = 0; i < ctx->cache_num_blocks; i++) {
-            if (ctx->cache_blocks[i]) chm_free(ctx, ctx->cache_blocks[i]);
-        }
-        chm_free(ctx, ctx->cache_blocks);
-        ctx->cache_blocks = NULL;
-    }
-    if (ctx->cache_block_indices) chm_free(ctx, ctx->cache_block_indices);
-    ctx->cache_block_indices = NULL;
 
     /* clear archive fields (keep alloc/free/error/user) */
     if (ctx->entries) {
@@ -796,69 +783,10 @@ void chm_close(chm_ctx *ctx)
     ctx->reset_interval = 0;
     ctx->reset_blkcount = 0;
     ctx->lzx_last_block = 0;
-    ctx->cache_num_blocks = 0;
     ctx->dir_page_count = 0;
     ctx->dir_pages_seen = 0;
     memset(ctx->dir_seen_bitmap, 0, sizeof(ctx->dir_seen_bitmap));
 }
-
-/*
- * set a parameter on the file handle.
- * valid parameter types:
- *          CHM_PARAM_MAX_BLOCKS_CACHED:
- *                 how many decompressed blocks should be cached?  A simple
- *                 caching scheme is used, wherein the index of the block is
- *                 used as a hash value, and hash collision results in the
- *                 invalidation of the previously cached block.
- */
-void chm_set_param(chm_ctx *ctx, int paramType, int paramVal) {
-    switch (paramType) {
-        case CHM_PARAM_MAX_BLOCKS_CACHED:
-            if (paramVal != ctx->cache_num_blocks) {
-                uint8_t **newBlocks;
-                uint64_t *newIndices;
-                int i;
-
-                newBlocks = (uint8_t **)chm_alloc(ctx, (size_t)paramVal * sizeof(uint8_t *));
-                if (!newBlocks) return;
-                newIndices = (uint64_t *)chm_alloc(ctx, (size_t)paramVal * sizeof(uint64_t));
-                if (!newIndices) {
-                    chm_free(ctx, newBlocks);
-                    return;
-                }
-                for (i = 0; i < paramVal; i++) {
-                    newBlocks[i] = NULL;
-                    newIndices[i] = 0;
-                }
-
-                if (ctx->cache_blocks) {
-                    for (i = 0; i < ctx->cache_num_blocks; i++) {
-                        int newSlot = (int)(ctx->cache_block_indices[i] % (uint64_t)paramVal);
-                        if (ctx->cache_blocks[i]) {
-                            if (newBlocks[newSlot]) {
-                                chm_free(ctx, ctx->cache_blocks[i]);
-                                ctx->cache_blocks[i] = NULL;
-                            } else {
-                                newBlocks[newSlot] = ctx->cache_blocks[i];
-                                newIndices[newSlot] = ctx->cache_block_indices[i];
-                            }
-                        }
-                    }
-                    chm_free(ctx, ctx->cache_blocks);
-                    chm_free(ctx, ctx->cache_block_indices);
-                }
-
-                ctx->cache_blocks = newBlocks;
-                ctx->cache_block_indices = newIndices;
-                ctx->cache_num_blocks = paramVal;
-            }
-            break;
-
-        default:
-            break;
-    }
-}
-
 
 /* find an exact entry in PMGL; return NULL if we fail.
    Compares directly without using fixed-size buffer. */
@@ -1043,7 +971,6 @@ static int64_t decompress_block(chm_ctx *ctx, uint64_t block, uint8_t** ubuffer)
     uint64_t cbufferLen;
     uint64_t cmpStart;                                           /* compressed start  */
     int64_t cmpLen;                                              /* compressed len    */
-    int indexSlot;                                               /* cache index slot  */
     uint8_t* lbuffer;                                            /* local buffer ptr  */
     uint32_t blockAlign = (uint32_t)(block % ctx->reset_blkcount); /* reset intvl. aln. */
     uint32_t i;                                                  /* local loop index  */
@@ -1068,24 +995,23 @@ static int64_t decompress_block(chm_ctx *ctx, uint64_t block, uint8_t** ubuffer)
                     LZXreset(ctx->lzx_state);
                 }
 
-                indexSlot = (int)((curBlockIdx) % ctx->cache_num_blocks);
-                if (!ctx->cache_blocks[indexSlot])
-                    ctx->cache_blocks[indexSlot] = (uint8_t *)chm_alloc(ctx, (size_t)ctx->reset_table.block_len);
-                if (!ctx->cache_blocks[indexSlot]) {
+                /* allocate a temporary buffer for previous block (we only need side-effect on LZX state) */
+                lbuffer = (uint8_t *)chm_alloc(ctx, (size_t)ctx->reset_table.block_len);
+                if (!lbuffer) {
                     chm_free(ctx, cbuffer);
                     return -1;
                 }
-                ctx->cache_block_indices[indexSlot] = curBlockIdx;
-                lbuffer = ctx->cache_blocks[indexSlot];
 
                 /* decompress the previous block */
                 if (!get_cmpblock_bounds(ctx, curBlockIdx, &cmpStart, &cmpLen) || cmpLen < 0 ||
                     cmpLen > cbufferLen || fetch_bytes(ctx, cbuffer, cmpStart, cmpLen) != cmpLen ||
                     LZXdecompress(ctx->lzx_state, cbuffer, lbuffer, (int)cmpLen, (int)ctx->reset_table.block_len) != DECR_OK) {
+                    chm_free(ctx, lbuffer);
                     chm_free(ctx, cbuffer);
                     return (int64_t)0;
                 }
 
+                chm_free(ctx, lbuffer);
                 ctx->lzx_last_block = (int)curBlockIdx;
             }
         }
@@ -1095,27 +1021,20 @@ static int64_t decompress_block(chm_ctx *ctx, uint64_t block, uint8_t** ubuffer)
         }
     }
 
-    /* SumatraPDF: prevent division by zero */
-    if (ctx->cache_num_blocks == 0) {
+    /* allocate fresh buffer for this block (no caching) */
+    lbuffer = (uint8_t *)chm_alloc(ctx, (size_t)ctx->reset_table.block_len);
+    if (!lbuffer) {
         chm_free(ctx, cbuffer);
         return -1;
     }
-
-    indexSlot = (int)(block % ctx->cache_num_blocks);
-    if (!ctx->cache_blocks[indexSlot])
-        ctx->cache_blocks[indexSlot] = (uint8_t *)chm_alloc(ctx, (size_t)ctx->reset_table.block_len);
-    if (!ctx->cache_blocks[indexSlot]) {
-        chm_free(ctx, cbuffer);
-        return -1;
-    }
-    ctx->cache_block_indices[indexSlot] = block;
-    lbuffer = ctx->cache_blocks[indexSlot];
     *ubuffer = lbuffer;
 
     ok = get_cmpblock_bounds(ctx, block, &cmpStart, &cmpLen);
     if (!ok || cmpLen > cbufferLen || fetch_bytes(ctx, cbuffer, cmpStart, cmpLen) != cmpLen ||
         LZXdecompress(ctx->lzx_state, cbuffer, lbuffer, (int)cmpLen, (int)ctx->reset_table.block_len) != DECR_OK) {
         chm_free(ctx, cbuffer);
+        chm_free(ctx, lbuffer);
+        *ubuffer = NULL;
         return (int64_t)0;
     }
     ctx->lzx_last_block = (int)block;
@@ -1145,16 +1064,6 @@ static int64_t decompress_region(chm_ctx *ctx, uint8_t* buf, uint64_t start, int
     nLen = len;
     if (nLen > (ctx->reset_table.block_len - nOffset)) nLen = ctx->reset_table.block_len - nOffset;
 
-    /* SumatraPDF: seen in a crash report */
-    if (ctx->cache_num_blocks > 0) {
-        /* if block is cached, return data from it. */
-        if (ctx->cache_block_indices[nBlock % ctx->cache_num_blocks] == nBlock &&
-            ctx->cache_blocks[nBlock % ctx->cache_num_blocks] != NULL) {
-            memcpy(buf, ctx->cache_blocks[nBlock % ctx->cache_num_blocks] + nOffset, (unsigned int)nLen);
-            return nLen;
-        }
-    }
-
     /* data request not satisfied, so... start up the decompressor machine */
     if (!ctx->lzx_state) {
         int window_size = ffs(ctx->window_size) - 1;
@@ -1176,6 +1085,7 @@ static int64_t decompress_region(chm_ctx *ctx, uint8_t* buf, uint64_t start, int
     }
     if (gotLen < nLen) nLen = gotLen;
     memcpy(buf, ubuffer + nOffset, (unsigned int)nLen);
+    chm_free(ctx, ubuffer);
     return nLen;
 }
 

@@ -95,9 +95,6 @@ int LZX_test_pretree_make_decode_table(void); /* test helper */
 /* ===================================================================== */
 
 /* tuning */
-#ifndef CHM_MAX_BLOCKS_CACHED
-#define CHM_MAX_BLOCKS_CACHED 5
-#endif
 #define CHM_MAX_DIR_PAGES 65536
 #define CHM_DIR_SEEN_BITMAP_BITS CHM_MAX_DIR_PAGES
 #define CHM_DIR_SEEN_BITMAP_WORDS (CHM_DIR_SEEN_BITMAP_BITS / 32)
@@ -308,11 +305,6 @@ struct chm_ctx {
 
     struct LZXstate *lzx_state;
     int lzx_last_block;
-
-    /* block cache */
-    uint8_t **cache_blocks;
-    uint64_t *cache_block_indices;
-    int32_t cache_num_blocks;
 
     /* dir visit state */
     uint64_t dir_page_count;
