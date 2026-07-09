@@ -224,7 +224,10 @@ static int read_lzxc_reset_table(uint8_t **pData, unsigned int *pDataLen, struct
     if (dest->version != 2) return 0;
     if (dest->block_count == 0) return 0;
     if (dest->uncompressed_len > INT_MAX || dest->compressed_len > INT_MAX) return 0;
-    if (dest->block_len == 0 || dest->block_len > INT_MAX) return 0;
+    /* block_len is the per-block uncompressed size (normally 0x8000); a single
+       LZX block cannot decode more than the largest legal window (2 MB), so cap
+       it there instead of INT_MAX to bound the decompress buffers */
+    if (dest->block_len == 0 || dest->block_len > 2097152) return 0;
     return 1;
 }
 
