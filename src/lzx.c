@@ -183,16 +183,16 @@ int LZXreset(struct LZXstate* pState) {
  * These bit access routines work by using the area beyond the MSB and the
  * LSB as a free source of zeroes. This avoids having to mask any bits.
  * So we have to know the bit width of the bitbuffer variable. This is
- * sizeof(uint32_t) * 8, also defined as uint32_t_BITS
+ * sizeof(uint32_t) * 8, also defined as BITBUF_WIDTH
  */
 
-/* number of bits in uint32_t. Note: This must be at multiple of 16, and at
- * least 32 for the bitbuffer code to work (ie, it must be able to ensure
+/* number of bits in the bit buffer. Note: This must be a multiple of 16, and
+ * at least 32 for the bitbuffer code to work (ie, it must be able to ensure
  * up to 17 bits - that's adding 16 bits when there's one bit left, or
  * adding 32 bits when there are no bits left. The code should work fine
  * for machines where uint32_t >= 32 bits.
  */
-#define uint32_t_BITS (sizeof(uint32_t) << 3)
+#define BITBUF_WIDTH (sizeof(uint32_t) << 3)
 
 #define INIT_BITSTREAM \
     do {               \
@@ -206,12 +206,12 @@ int LZXreset(struct LZXstate* pState) {
         if ((uint8_t*)inpos < (uint8_t*)endinp) next_bits = inpos[0];                  \
         if ((uint8_t*)inpos + 1 < (uint8_t*)endinp) next_bits |= (uint32_t)inpos[1] << 8; \
         if ((uint8_t*)inpos > (uint8_t*)endinp + 2) return DECR_ILLEGALDATA;           \
-        bitbuf |= next_bits << (uint32_t_BITS - 16 - bitsleft);                       \
+        bitbuf |= next_bits << (BITBUF_WIDTH - 16 - bitsleft);                       \
         bitsleft += 16;                                                            \
         inpos += 2;                                                                \
     }
 
-#define PEEK_BITS(n) (bitbuf >> (uint32_t_BITS - (n)))
+#define PEEK_BITS(n) (bitbuf >> (BITBUF_WIDTH - (n)))
 #define REMOVE_BITS(n) ((bitbuf <<= (n)), (bitsleft -= (n)))
 
 #define READ_BITS(v, n)     \
@@ -246,7 +246,7 @@ int LZXreset(struct LZXstate* pState) {
         ENSURE_BITS(16);                                                   \
         hufftbl = SYMTABLE(tbl);                                           \
         if ((i = hufftbl[PEEK_BITS(TABLEBITS(tbl))]) >= MAXSYMBOLS(tbl)) { \
-            j = 1 << (uint32_t_BITS - TABLEBITS(tbl));                        \
+            j = 1 << (BITBUF_WIDTH - TABLEBITS(tbl));                        \
             do {                                                           \
                 j >>= 1;                                                   \
                 i <<= 1;                                                   \
