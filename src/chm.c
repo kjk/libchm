@@ -393,6 +393,11 @@ static int parse_PMGL_entry(chm_ctx *ctx, uint8_t** pEntry, uint8_t* end, struct
 /* forward decl for retrieve helper (defined after open logic) */
 static int64_t retrieve_object_range(chm_ctx *ctx, struct chm_entry* entry, uint8_t* buf, uint64_t addr, int64_t len);
 
+/* internal resolve (not part of public API) */
+#define CHM_RESOLVE_SUCCESS (0)
+#define CHM_RESOLVE_FAILURE (1)
+static int chm_resolve_object(chm_ctx *ctx, const char* objPath, struct chm_entry* entry);
+
 /* collect every unit in the archive into ctx->units / ctx->unit_ptrs */
 static int collect_units(chm_ctx *ctx) {
     struct chmDirSession session;
@@ -936,7 +941,7 @@ static int32_t find_in_PMGI(uint8_t* page_buf, uint32_t block_len, const char* o
 /* enumeration walk removed */
 
 /* resolve a particular object from the archive */
-int chm_resolve_object(chm_ctx *ctx, const char* objPath, struct chm_entry* entry) {
+static int chm_resolve_object(chm_ctx *ctx, const char* objPath, struct chm_entry* entry) {
     /*
      * XXX: implement caching scheme for dir pages
      */
@@ -1227,7 +1232,7 @@ static int64_t retrieve_object_range(chm_ctx *ctx, struct chm_entry* entry, uint
 }
 
 /* retrieve an entire object from the archive */
-int64_t chm_retrieve_object(chm_ctx *ctx, struct chm_entry *entry, uint8_t *buf) {
+int64_t chm_read_entry(chm_ctx *ctx, struct chm_entry *entry, uint8_t *buf) {
     if (!entry) return 0;
     return retrieve_object_range(ctx, entry, buf, 0, entry->length);
 }

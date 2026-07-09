@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
@@ -15,23 +16,21 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     }
 
     /* drive common surface */
-    struct chm_entry ui;
-    chm_resolve_object(ctx, "/", &ui);
-    chm_resolve_object(ctx, "/#SYSTEM", &ui);
-
-    /* retrieve full object (partial reads no longer supported) */
-    if (ui.length > 0 && ui.length <= (1 << 20)) {
-        uint8_t *tmp = malloc(ui.length);
-        if (tmp) {
-            chm_retrieve_object(ctx, &ui, tmp);
-            free(tmp);
+    struct chm_entry **entries = NULL;
+    int n = chm_get_entries(ctx, &entries);
+    for (int i = 0; i < n; i++) {
+        if (strcmp(entries[i]->path, "/") == 0 ||
+            strcmp(entries[i]->path, "/#SYSTEM") == 0) {
+            if (entries[i]->length > 0 && entries[i]->length <= (1 << 20)) {
+                uint8_t *tmp = malloc(entries[i]->length);
+                if (tmp) {
+                    chm_read_entry(ctx, entries[i], tmp);
+                    free(tmp);
+                }
+            }
         }
     }
-
-    /* get all units */
-    struct chm_entry **units = NULL;
-    int n = chm_get_entries(ctx, &units);
-    (void)n;
+    (void)n;  /* n already obtained above */
 
     chm_close(ctx);
     chm_ctx_free(ctx);

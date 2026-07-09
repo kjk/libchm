@@ -13,14 +13,20 @@ This is a CHM / ITSS archive reader, ported and cleaned from CHMLib, in the styl
 See `src/chm.h`. Basic usage:
 
 ```c
-chmFile *chm = chm_open(NULL, data, len);   /* data must outlive chm */
-struct chm_entry entry;
-if (chm_resolve_object(chm, "/foo/bar.html", &ui) == CHM_RESOLVE_SUCCESS) {
-    uint8_t *buf = ...;
-    chm_retrieve_object(chm, &entry, buf);  /* buf must be at least entry.length bytes */
+chm_ctx *ctx = chm_open(NULL, data, len);   /* data must outlive ctx */
+struct chm_entry **entries = NULL;
+int n = chm_get_entries(ctx, &entries);
+for (int i = 0; i < n; i++) {
+    if (strcmp(entries[i]->path, "/foo/bar.html") == 0) {
+        uint8_t *buf = malloc(entries[i]->length);
+        if (buf) {
+            chm_read_entry(ctx, entries[i], buf);
+            free(buf);
+        }
+        break;
+    }
 }
-chm_enumerate(chm, CHM_ENUMERATE_FILES | CHM_ENUMERATE_NORMAL, my_enum, ctx);
-chm_close(chm);
+chm_close(ctx);
 ```
 
 ## Build & test
