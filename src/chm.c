@@ -54,6 +54,77 @@ static const char _CHMU_CONTENT[] = "::DataSpace/Storage/MSCompressed/Content";
 static const char _CHMU_SPANINFO[] = "::DataSpace/Storage/MSCompressed/SpanInfo";
 #endif
 
+/* read helpers (internal, not inlined) */
+
+static int read_char_array(uint8_t **pData, unsigned int *pLenRemain, char *dest, int count)
+{
+    if (count <= 0 || (unsigned int)count > *pLenRemain) return 0;
+    memcpy(dest, *pData, (size_t)count);
+    *pData += count;
+    *pLenRemain -= (unsigned int)count;
+    return 1;
+}
+
+static int read_uchar_array(uint8_t **pData, unsigned int *pLenRemain, uint8_t *dest, int count)
+{
+    if (count <= 0 || (unsigned int)count > *pLenRemain) return 0;
+    memcpy(dest, *pData, (size_t)count);
+    *pData += count;
+    *pLenRemain -= (unsigned int)count;
+    return 1;
+}
+
+static int read_i32(uint8_t **pData, unsigned int *pLenRemain, int32_t *dest)
+{
+    if (4 > *pLenRemain) return 0;
+    *dest = (*pData)[0] | ((*pData)[1] << 8) | ((*pData)[2] << 16) | ((*pData)[3] << 24);
+    *pData += 4;
+    *pLenRemain -= 4;
+    return 1;
+}
+
+static int read_u32(uint8_t **pData, unsigned int *pLenRemain, uint32_t *dest)
+{
+    if (4 > *pLenRemain) return 0;
+    *dest = (*pData)[0] | ((*pData)[1] << 8) | ((*pData)[2] << 16) | ((*pData)[3] << 24);
+    *pData += 4;
+    *pLenRemain -= 4;
+    return 1;
+}
+
+static int read_i64(uint8_t **pData, unsigned int *pLenRemain, int64_t *dest)
+{
+    int64_t temp = 0;
+    if (8 > *pLenRemain) return 0;
+    for (int i = 8; i > 0; i--) {
+        temp <<= 8;
+        temp |= (*pData)[i - 1];
+    }
+    *dest = temp;
+    *pData += 8;
+    *pLenRemain -= 8;
+    return 1;
+}
+
+static int read_u64(uint8_t **pData, unsigned int *pLenRemain, uint64_t *dest)
+{
+    uint64_t temp = 0;
+    if (8 > *pLenRemain) return 0;
+    for (int i = 8; i > 0; i--) {
+        temp <<= 8;
+        temp |= (*pData)[i - 1];
+    }
+    *dest = temp;
+    *pData += 8;
+    *pLenRemain -= 8;
+    return 1;
+}
+
+static int read_uuid(uint8_t **pData, unsigned int *pDataLen, uint8_t *dest)
+{
+    return read_uchar_array(pData, pDataLen, dest, 16);
+}
+
 /* ITSF/ITSP readers (local, depend on markers in scope via internal) */
 
 static int read_itsf_header(uint8_t **pData, unsigned int *pDataLen, struct chmItsfHeader *dest)
