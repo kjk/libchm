@@ -22,7 +22,11 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     uint8_t buf[256];
     chm_retrieve_object(ctx, &ui, buf, 0, sizeof(buf));
 
-    /* enumerate a little */
+    /* get all units */
+    struct chmUnitInfo **units = NULL;
+    int n = chm_get_units(ctx, &units);
+    (void)n;
+
     chm_close(ctx);
     chm_ctx_free(ctx);
     return 0;

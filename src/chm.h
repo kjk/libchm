@@ -51,14 +51,15 @@ void chm_set_param(chm_ctx *ctx, int paramType, int paramVal);
 
 /* ----- units (files/directories inside the archive) ----- */
 
-#define CHM_MAX_PATHLEN (512)
-
+/* chmUnitInfo describes one entry inside the CHM.
+   The 'path' string is allocated and owned by the chm_ctx; it is valid
+   until chm_close and must not be freed by the caller. */
 struct chmUnitInfo {
     uint64_t start;
     uint64_t length;
     int space;
     int flags;
-    char path[CHM_MAX_PATHLEN + 1];
+    char *path;
 };
 
 /* the two available spaces in a CHM file (only these two are used in practice) */
@@ -74,23 +75,10 @@ int chm_resolve_object(chm_ctx *ctx, const char *objPath, struct chmUnitInfo *ui
 int64_t chm_retrieve_object(chm_ctx *ctx, struct chmUnitInfo *ui, uint8_t *buf,
                              uint64_t addr, int64_t len);
 
-/* enumerate the objects in the .chm archive */
-typedef int (*CHM_ENUMERATOR)(chm_ctx *ctx, struct chmUnitInfo *ui, void *context);
-
-#define CHM_ENUMERATE_NORMAL (1)
-#define CHM_ENUMERATE_META   (2)
-#define CHM_ENUMERATE_SPECIAL (4)
-#define CHM_ENUMERATE_FILES  (8)
-#define CHM_ENUMERATE_DIRS   (16)
-#define CHM_ENUMERATE_ALL    (31)
-
-#define CHM_ENUMERATOR_FAILURE (0)
-#define CHM_ENUMERATOR_CONTINUE (1)
-#define CHM_ENUMERATOR_SUCCESS (2)
-
-int chm_enumerate(chm_ctx *ctx, int what, CHM_ENUMERATOR e, void *context);
-int chm_enumerate_dir(chm_ctx *ctx, const char *prefix, int what,
-                      CHM_ENUMERATOR e, void *context);
+/* Return the number of units and set *outUnits to an internal array of
+   pointers to chmUnitInfo (the array and all strings are owned by ctx
+   and are freed by chm_close). Returns 0 on error or if nothing is open. */
+int chm_get_units(chm_ctx *ctx, struct chmUnitInfo ***outUnits);
 
 #ifdef __cplusplus
 }

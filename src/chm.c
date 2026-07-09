@@ -385,6 +385,121 @@ static int _chm_dir_session_fetch(struct chmDirSession* s, int32_t page) {
     return _chm_dir_fetch_page(s->ctx, page, s->page_buf);
 }
 
+/* forward decls for helpers used by collector (defined later) */
+static int _chm_parse_cword(uint8_t** pEntry, uint8_t* end, uint64_t* result);
+static void _chm_skip_PMGL_entry_data(uint8_t** pEntry, uint8_t* end);
+static int _chm_parse_PMGL_entry(chm_ctx *ctx, uint8_t** pEntry, uint8_t* end, struct chmUnitInfo* ui);
+
+/* collect every unit in the archive into ctx->units / ctx->unit_ptrs */
+static int _chm_collect_units(chm_ctx *ctx) {
+    struct chmDirSession session;
+    struct chmPmglHeader header;
+    int count = 0;
+    uint8_t *cur, *end;
+    unsigned int remain;
+
+    if (!ctx || ctx->unit_count > 0) return ctx->unit_count;
+
+    if (!_chm_dir_session_begin(ctx, &session)) return 0;
+
+    /* first pass: count entries by walking PMGL chain (ignore PMGI for full list) */
+    int32_t page = ctx->index_head;
+    while (page != -1) {
+        if (!_chm_dir_session_fetch(&session, page)) break;
+        if (memcmp(session.page_buf, _chm_pmgl_marker, 4) == 0) {
+            cur = session.page_buf;
+            remain = _CHM_PMGL_LEN;
+            if (_unmarshal_pmgl_header(&cur, &remain, ctx->block_len, &header)) {
+                end = session.page_buf + ctx->block_len - (header.free_space);
+                while (cur < end) {
+                    uint64_t nlen;
+                    if (!_chm_parse_cword(&cur, end, &nlen)) break;
+                    cur += nlen;
+                    _chm_skip_PMGL_entry_data(&cur, end);
+                    count++;
+                }
+                page = header.block_next;
+                continue;
+            }
+        }
+        /* if not a parsable PMGL, try to follow next if possible (rare) */
+        page = -1;
+    }
+
+    if (count == 0) {
+        _chm_dir_session_end(&session);
+        return 0;
+    }
+
+    ctx->units = (struct chmUnitInfo *)chm_alloc(ctx, sizeof(struct chmUnitInfo) * count);
+    ctx->unit_ptrs = (struct chmUnitInfo **)chm_alloc(ctx, sizeof(struct chmUnitInfo *) * count);
+    if (!ctx->units || !ctx->unit_ptrs) {
+        chm_free(ctx, ctx->units);
+        chm_free(ctx, ctx->unit_ptrs);
+        ctx->units = NULL;
+        ctx->unit_ptrs = NULL;
+        _chm_dir_session_end(&session);
+        return 0;
+    }
+
+    /* reset visit state so second pass can fetch the pages again */
+    _chm_dir_visit_reset(ctx);
+
+    /* second pass: parse and store */
+    int idx = 0;
+    page = ctx->index_head;
+    while (page != -1 && idx < count) {
+        if (!_chm_dir_session_fetch(&session, page)) break;
+        if (memcmp(session.page_buf, _chm_pmgl_marker, 4) != 0) {
+            page = -1; continue;
+        }
+        cur = session.page_buf;
+        remain = _CHM_PMGL_LEN;
+        if (!_unmarshal_pmgl_header(&cur, &remain, ctx->block_len, &header)) break;
+        end = session.page_buf + ctx->block_len - (header.free_space);
+
+        while (cur < end && idx < count) {
+            struct chmUnitInfo *ui = &ctx->units[idx];
+            memset(ui, 0, sizeof(*ui));
+
+            if (!_chm_parse_PMGL_entry(ctx, &cur, end, ui)) {
+                /* on parse error, stop */
+                break;
+            }
+
+            /* set flags (simplified, we always return everything) */
+            size_t plen = strlen(ui->path);
+            if (plen > 0) {
+                if (ui->path[plen-1] == '/') ui->flags |= 16; /* DIR */
+                else ui->flags |= 8; /* FILE */
+                if (ui->path[0] == '/') {
+                    if (ui->path[1] == '#' || ui->path[1] == '$') ui->flags |= 4; /* SPECIAL */
+                    else ui->flags |= 1; /* NORMAL */
+                } else {
+                    ui->flags |= 2; /* META */
+                }
+            }
+
+            ctx->unit_ptrs[idx] = ui;
+            idx++;
+        }
+        page = header.block_next;
+    }
+
+    ctx->unit_count = idx;
+    _chm_dir_session_end(&session);
+    return ctx->unit_count;
+}
+
+int chm_get_units(chm_ctx *ctx, struct chmUnitInfo ***outUnits) {
+    if (!ctx || !ctx->data || ctx->unit_count <= 0) {
+        if (outUnits) *outUnits = NULL;
+        return 0;
+    }
+    if (outUnits) *outUnits = ctx->unit_ptrs;
+    return ctx->unit_count;
+}
+
 bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
 {
     uint8_t sbuffer[256];
@@ -456,6 +571,9 @@ bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
      * as a result, we must use the sole PMGL block as the index root
      */
     if (ctx->index_root <= -1) ctx->index_root = ctx->index_head;
+
+    /* collect all units (always everything, no filtering) */
+    _chm_collect_units(ctx);
 
     /* By default, compression is enabled. */
     ctx->compression_enabled = 1;
@@ -564,6 +682,17 @@ void chm_close(chm_ctx *ctx)
     ctx->cache_block_indices = NULL;
 
     /* clear archive fields (keep alloc/free/error/user) */
+    if (ctx->units) {
+        for (int i = 0; i < ctx->unit_count; i++) {
+            chm_free(ctx, ctx->units[i].path);
+        }
+        chm_free(ctx, ctx->units);
+        chm_free(ctx, ctx->unit_ptrs);
+        ctx->units = NULL;
+        ctx->unit_ptrs = NULL;
+        ctx->unit_count = 0;
+    }
+
     ctx->data = NULL;
     ctx->data_len = 0;
     /* zero the rest for safety */
@@ -699,16 +828,23 @@ static int _chm_parse_UTF8(uint8_t** pEntry, uint8_t* end, uint64_t count, char*
     return 1;
 }
 
-/* parse a PMGL entry into a chmUnitInfo struct; return 1 on success. */
-static int _chm_parse_PMGL_entry(uint8_t** pEntry, uint8_t* end, struct chmUnitInfo* ui) {
+/* parse a PMGL entry into a chmUnitInfo struct; allocates path via ctx.
+   return 1 on success. */
+static int _chm_parse_PMGL_entry(chm_ctx *ctx, uint8_t** pEntry, uint8_t* end, struct chmUnitInfo* ui) {
     uint64_t strLen;
 
     /* parse str len */
     if (!_chm_parse_cword(pEntry, end, &strLen)) return 0;
-    if (strLen == 0 || strLen > CHM_MAX_PATHLEN) return 0;
+    if (strLen == 0) return 0;
 
-    /* parse path */
-    if (!_chm_parse_UTF8(pEntry, end, strLen, ui->path)) return 0;
+    /* allocate and parse path */
+    ui->path = (char *)chm_alloc(ctx, (size_t)strLen + 1);
+    if (!ui->path) return 0;
+    if (!_chm_parse_UTF8(pEntry, end, strLen, ui->path)) {
+        chm_free(ctx, ui->path);
+        ui->path = NULL;
+        return 0;
+    }
 
     /* parse info */
     if (!_chm_parse_cword(pEntry, end, &strLen)) return 0;
@@ -718,7 +854,8 @@ static int _chm_parse_PMGL_entry(uint8_t** pEntry, uint8_t* end, struct chmUnitI
     return 1;
 }
 
-/* find an exact entry in PMGL; return NULL if we fail */
+/* find an exact entry in PMGL; return NULL if we fail.
+   Compares directly without using fixed-size buffer. */
 static uint8_t* _chm_find_in_PMGL(uint8_t* page_buf, uint32_t block_len, const char* objPath) {
     /* XXX: modify this to do a binary search using the nice index structure
      *      that is provided for us.
@@ -729,7 +866,6 @@ static uint8_t* _chm_find_in_PMGL(uint8_t* page_buf, uint32_t block_len, const c
     uint8_t* cur;
     uint8_t* temp;
     uint64_t strLen;
-    char buffer[CHM_MAX_PATHLEN + 1];
 
     /* figure out where to start and end */
     cur = page_buf;
@@ -742,12 +878,15 @@ static uint8_t* _chm_find_in_PMGL(uint8_t* page_buf, uint32_t block_len, const c
         /* grab the name */
         temp = cur;
         if (!_chm_parse_cword(&cur, end, &strLen)) return NULL;
-        if (strLen == 0 || strLen > CHM_MAX_PATHLEN) return NULL;
-        if (!_chm_parse_UTF8(&cur, end, strLen, buffer)) return NULL;
+        if (strLen == 0) return NULL;
 
-        /* check if it is the right name */
-        if (strcasecmp(buffer, objPath) == 0) return temp;
+        /* compare directly */
+        if (strLen == strlen(objPath) &&
+            strncasecmp((const char*)cur, objPath, (size_t)strLen) == 0) {
+            return temp;
+        }
 
+        cur += strLen;
         _chm_skip_PMGL_entry_data(&cur, end);
     }
 
@@ -765,7 +904,6 @@ static int32_t _chm_find_in_PMGI(uint8_t* page_buf, uint32_t block_len, const ch
     uint8_t* end;
     uint8_t* cur;
     uint64_t strLen;
-    char buffer[CHM_MAX_PATHLEN + 1];
 
     /* figure out where to start and end */
     cur = page_buf;
@@ -777,13 +915,14 @@ static int32_t _chm_find_in_PMGI(uint8_t* page_buf, uint32_t block_len, const ch
     while (cur < end) {
         /* grab the name */
         if (!_chm_parse_cword(&cur, end, &strLen)) return -1;
-        if (strLen == 0 || strLen > CHM_MAX_PATHLEN) return -1;
-        if (!_chm_parse_UTF8(&cur, end, strLen, buffer)) return -1;
+        if (strLen == 0) return -1;
 
-        /* check if it is the right name */
-        if (strcasecmp(buffer, objPath) > 0) return page;
+        /* compare directly */
+        if (strcasecmp((const char*)cur, objPath) > 0) return page;
 
-        /* load next value for path */
+        cur += strLen;
+
+        /* load next value for path (the page number) */
         if (!_chm_parse_cword(&cur, end, &strLen) || strLen > INT_MAX) return -1;
         page = (int)strLen;
     }
@@ -791,84 +930,7 @@ static int32_t _chm_find_in_PMGI(uint8_t* page_buf, uint32_t block_len, const ch
     return page;
 }
 
-static void _chm_set_entry_flags(struct chmUnitInfo* ui) {
-    size_t path_len = strlen(ui->path);
-    uint64_t ui_path_len;
-
-    if (path_len == 0) return;
-    ui_path_len = path_len - 1;
-
-    if (ui->path[ui_path_len] == '/') ui->flags |= CHM_ENUMERATE_DIRS;
-    if (ui->path[ui_path_len] != '/') ui->flags |= CHM_ENUMERATE_FILES;
-    if (ui->path[0] == '/') {
-        if (ui->path[1] == '#' || ui->path[1] == '$')
-            ui->flags |= CHM_ENUMERATE_SPECIAL;
-        else
-            ui->flags |= CHM_ENUMERATE_NORMAL;
-    } else
-        ui->flags |= CHM_ENUMERATE_META;
-}
-
-typedef int (*ChmPmglEntryFn)(chm_ctx *ctx, struct chmUnitInfo* ui, void* data);
-
-typedef enum {
-    CHM_PMGL_WALK_FAILURE = 0,
-    CHM_PMGL_WALK_DONE = 1,
-} ChmPmglWalkResult;
-
-static ChmPmglWalkResult _chm_walk_pmgl_pages(chm_ctx *c, int32_t start_page, ChmPmglEntryFn entry_fn,
-                                              void* user) {
-    struct chmDirSession session;
-    int32_t curPage;
-    ChmPmglWalkResult result = CHM_PMGL_WALK_DONE;
-
-    if (!_chm_dir_session_begin(c, &session)) return CHM_PMGL_WALK_FAILURE;
-
-    curPage = start_page;
-    while (curPage != -1) {
-        struct chmPmglHeader header;
-        uint8_t* cur;
-        uint8_t* end;
-        unsigned int lenRemain;
-
-        if (!_chm_dir_session_fetch(&session, curPage)) {
-            result = CHM_PMGL_WALK_FAILURE;
-            goto cleanup;
-        }
-
-        cur = session.page_buf;
-        lenRemain = _CHM_PMGL_LEN;
-        if (!_unmarshal_pmgl_header(&cur, &lenRemain, c->block_len, &header)) {
-            result = CHM_PMGL_WALK_FAILURE;
-            goto cleanup;
-        }
-        end = session.page_buf + c->block_len - (header.free_space);
-
-        while (cur < end) {
-            struct chmUnitInfo ui;
-            int status;
-
-            ui.flags = 0;
-            if (!_chm_parse_PMGL_entry(&cur, end, &ui)) {
-                result = CHM_PMGL_WALK_FAILURE;
-                goto cleanup;
-            }
-
-            status = entry_fn(c, &ui, user);
-            if (status == CHM_ENUMERATOR_FAILURE) {
-                result = CHM_PMGL_WALK_FAILURE;
-                goto cleanup;
-            }
-            if (status == CHM_ENUMERATOR_SUCCESS) goto cleanup;
-        }
-
-        curPage = header.block_next < 0 ? -1 : header.block_next;
-    }
-
-cleanup:
-    _chm_dir_session_end(&session);
-    return result;
-}
+/* enumeration walk removed */
 
 /* resolve a particular object from the archive */
 int chm_resolve_object(chm_ctx *ctx, const char* objPath, struct chmUnitInfo* ui) {
@@ -894,7 +956,7 @@ int chm_resolve_object(chm_ctx *ctx, const char* objPath, struct chmUnitInfo* ui
         if (memcmp(session.page_buf, _chm_pmgl_marker, 4) == 0) {
             pEntry = _chm_find_in_PMGL(session.page_buf, ctx->block_len, objPath);
             if (pEntry == NULL) goto cleanup;
-            if (!_chm_parse_PMGL_entry(&pEntry, session.page_buf_end, ui)) goto cleanup;
+            if (!_chm_parse_PMGL_entry(ctx, &pEntry, session.page_buf_end, ui)) goto cleanup;
             result = CHM_RESOLVE_SUCCESS;
             goto cleanup;
         } else if (memcmp(session.page_buf, _chm_pmgi_marker, 4) == 0) {
@@ -1161,82 +1223,4 @@ int64_t chm_retrieve_object(chm_ctx *ctx, struct chmUnitInfo* ui, uint8_t* buf, 
     }
 }
 
-/* chmEnumerate*State defined in chm_internal.h */
-
-static int _chm_enumerate_page_entry(chm_ctx *ctx, struct chmUnitInfo* ui, void* data) {
-    struct chmEnumerateState* state = (struct chmEnumerateState*)data;
-
-    _chm_set_entry_flags(ui);
-    if (!(state->type_bits & ui->flags)) return CHM_ENUMERATOR_CONTINUE;
-    if (state->filter_bits && !(state->filter_bits & ui->flags)) return CHM_ENUMERATOR_CONTINUE;
-    return (*state->e)(ctx, ui, state->context);
-}
-
-/* enumerate the objects in the .chm archive */
-int chm_enumerate(chm_ctx *ctx, int what, CHM_ENUMERATOR e, void* context) {
-    struct chmEnumerateState state;
-
-    state.e = e;
-    state.context = context;
-    state.type_bits = (what & 0x7);
-    state.filter_bits = (what & 0xF8);
-    return _chm_walk_pmgl_pages(ctx, ctx->index_head, _chm_enumerate_page_entry, &state);
-}
-
-/* chmEnumerateDirState defined in chm_internal.h */
-
-static int _chm_enumerate_dir_page_entry(chm_ctx *ctx, struct chmUnitInfo* ui, void* data) {
-    struct chmEnumerateDirState* state = (struct chmEnumerateDirState*)data;
-
-    if (!state->it_has_begun) {
-        if (ui->length == 0 && strncasecmp(ui->path, state->prefixRectified, state->prefixLen) == 0)
-            state->it_has_begun = 1;
-        else
-            return CHM_ENUMERATOR_CONTINUE;
-
-        if (ui->path[state->prefixLen] == '\0') return CHM_ENUMERATOR_CONTINUE;
-    } else {
-        if (strncasecmp(ui->path, state->prefixRectified, state->prefixLen) != 0) return CHM_ENUMERATOR_SUCCESS;
-    }
-
-    if (state->lastPathLen != -1) {
-        if (strncasecmp(ui->path, state->lastPath, state->lastPathLen) == 0) return CHM_ENUMERATOR_CONTINUE;
-    }
-    strncpy(state->lastPath, ui->path, CHM_MAX_PATHLEN);
-    state->lastPath[CHM_MAX_PATHLEN] = '\0';
-    state->lastPathLen = strlen(state->lastPath);
-
-    _chm_set_entry_flags(ui);
-    if (!(state->type_bits & ui->flags)) return CHM_ENUMERATOR_CONTINUE;
-    if (state->filter_bits && !(state->filter_bits & ui->flags)) return CHM_ENUMERATOR_CONTINUE;
-    return (*state->e)(ctx, ui, state->context);
-}
-
-int chm_enumerate_dir(chm_ctx *ctx, const char* prefix, int what, CHM_ENUMERATOR e, void* context) {
-    /*
-     * XXX: do this efficiently (i.e. using the tree index)
-     */
-
-    struct chmEnumerateDirState state;
-
-    state.e = e;
-    state.context = context;
-    state.type_bits = (what & 0x7);
-    state.filter_bits = (what & 0xF8);
-    state.it_has_begun = 0;
-    state.lastPathLen = -1;
-
-    strncpy(state.prefixRectified, prefix, CHM_MAX_PATHLEN);
-    state.prefixRectified[CHM_MAX_PATHLEN] = '\0';
-    state.prefixLen = strlen(state.prefixRectified);
-    if (state.prefixLen != 0) {
-        if (state.prefixRectified[state.prefixLen - 1] != '/') {
-            state.prefixRectified[state.prefixLen] = '/';
-            state.prefixRectified[state.prefixLen + 1] = '\0';
-            ++state.prefixLen;
-        }
-    }
-    state.lastPath[0] = '\0';
-
-    return _chm_walk_pmgl_pages(ctx, ctx->index_head, _chm_enumerate_dir_page_entry, &state);
-}
+/* enumeration API removed; units are collected into ctx->units at open time */

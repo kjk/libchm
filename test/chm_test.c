@@ -5,13 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int list_entry(chm_ctx *ctx, struct chmUnitInfo *ui, void *user)
+static void print_unit(struct chmUnitInfo *ui)
 {
-    (void)ctx;
-    (void)user;
-    const char *type = (ui->flags & 2) ? "dir" : "file";
-    printf("  %s %s (len=%llu space=%d)\n", type, ui->path, (unsigned long long)ui->length, ui->space);
-    return CHM_ENUMERATOR_CONTINUE;
+    const char *type = (ui->flags & 16) ? "dir" : "file";
+    printf("  %s %s (len=%llu space=%d)\n", type, ui->path ? ui->path : "", (unsigned long long)ui->length, ui->space);
 }
 
 int main(int argc, char **argv)
@@ -72,8 +69,12 @@ int main(int argc, char **argv)
     printf("opened %s (%ld bytes)\n", path, sz);
 
     if (do_list) {
-        printf("entries:\n");
-        chm_enumerate(ctx, CHM_ENUMERATE_ALL, list_entry, NULL);
+        struct chmUnitInfo **units = NULL;
+        int n = chm_get_units(ctx, &units);
+        printf("entries (%d):\n", n);
+        for (int i = 0; i < n; i++) {
+            print_unit(units[i]);
+        }
     }
 
     chm_close(ctx);

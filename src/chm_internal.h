@@ -275,25 +275,7 @@ struct chmDirSession {
     uint8_t *page_buf_end;
 };
 
-/* enumerate helpers (used within chm.c) */
-struct chmEnumerateState {
-    CHM_ENUMERATOR e;
-    void *context;
-    int type_bits;
-    int filter_bits;
-};
-
-struct chmEnumerateDirState {
-    CHM_ENUMERATOR e;
-    void *context;
-    int type_bits;
-    int filter_bits;
-    int it_has_begun;
-    char prefixRectified[CHM_MAX_PATHLEN + 1];
-    int prefixLen;
-    char lastPath[CHM_MAX_PATHLEN + 1];
-    int lastPathLen;
-};
+/* no more callback enumeration; units are collected into ctx at open time */
 
 /* concrete ctx definition (after all structs it references) */
 struct chm_ctx {
@@ -336,6 +318,11 @@ struct chm_ctx {
     uint64_t dir_page_count;
     uint64_t dir_pages_seen;
     uint32_t dir_seen_bitmap[CHM_DIR_SEEN_BITMAP_WORDS];
+
+    /* all units collected at open time; freed on close */
+    struct chmUnitInfo *units;
+    int unit_count;
+    struct chmUnitInfo **unit_ptrs;
 };
 
 #endif /* CHM_INTERNAL_H */
