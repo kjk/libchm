@@ -385,7 +385,7 @@ static int dir_session_fetch(struct chmDirSession* s, int32_t page) {
     return dir_fetch_page(s->ctx, page, s->page_buf);
 }
 
-/* forward decls for helpers used by collector (defined later) */
+/* forward decls for helpers used by entry collector (defined later) */
 static int parse_cword(uint8_t** pEntry, uint8_t* end, uint64_t* result);
 static void skip_PMGL_entry_data(uint8_t** pEntry, uint8_t* end);
 static int parse_PMGL_entry(chm_ctx *ctx, uint8_t** pEntry, uint8_t* end, struct chm_entry* entry);
@@ -398,15 +398,15 @@ static int64_t retrieve_object_range(chm_ctx *ctx, struct chm_entry* entry, uint
 #define CHM_RESOLVE_FAILURE (1)
 static int chm_resolve_object(chm_ctx *ctx, const char* objPath, struct chm_entry* entry);
 
-/* collect every unit in the archive into ctx->units / ctx->unit_ptrs */
-static int collect_units(chm_ctx *ctx) {
+/* collect every entry in the archive into ctx->entries / ctx->entry_ptrs */
+static int collect_entries(chm_ctx *ctx) {
     struct chmDirSession session;
     struct chmPmglHeader header;
     int count = 0;
     uint8_t *cur, *end;
     unsigned int remain;
 
-    if (!ctx || ctx->unit_count > 0) return ctx->unit_count;
+    if (!ctx || ctx->entry_count > 0) return ctx->entry_count;
 
     if (!dir_session_begin(ctx, &session)) return 0;
 
@@ -439,13 +439,13 @@ static int collect_units(chm_ctx *ctx) {
         return 0;
     }
 
-    ctx->units = (struct chm_entry *)chm_alloc(ctx, sizeof(struct chm_entry) * count);
-    ctx->unit_ptrs = (struct chm_entry **)chm_alloc(ctx, sizeof(struct chm_entry *) * count);
-    if (!ctx->units || !ctx->unit_ptrs) {
-        chm_free(ctx, ctx->units);
-        chm_free(ctx, ctx->unit_ptrs);
-        ctx->units = NULL;
-        ctx->unit_ptrs = NULL;
+    ctx->entries = (struct chm_entry *)chm_alloc(ctx, sizeof(struct chm_entry) * count);
+    ctx->entry_ptrs = (struct chm_entry **)chm_alloc(ctx, sizeof(struct chm_entry *) * count);
+    if (!ctx->entries || !ctx->entry_ptrs) {
+        chm_free(ctx, ctx->entries);
+        chm_free(ctx, ctx->entry_ptrs);
+        ctx->entries = NULL;
+        ctx->entry_ptrs = NULL;
         dir_session_end(&session);
         return 0;
     }
@@ -467,7 +467,7 @@ static int collect_units(chm_ctx *ctx) {
         end = session.page_buf + ctx->block_len - (header.free_space);
 
         while (cur < end && idx < count) {
-            struct chm_entry *entry = &ctx->units[idx];
+            struct chm_entry *entry = &ctx->entries[idx];
             memset(entry, 0, sizeof(*entry));
 
             if (!parse_PMGL_entry(ctx, &cur, end, entry)) {
@@ -475,37 +475,43 @@ static int collect_units(chm_ctx *ctx) {
                 break;
             }
 
-            /* set flags (simplified, we always return everything) */
+            /* set type flags */
             size_t plen = strlen(entry->path);
             if (plen > 0) {
-                if (entry->path[plen-1] == '/') entry->flags |= 16; /* DIR */
-                else entry->flags |= 8; /* FILE */
-                if (entry->path[0] == '/') {
-                    if (entry->path[1] == '#' || entry->path[1] == '$') entry->flags |= 4; /* SPECIAL */
-                    else entry->flags |= 1; /* NORMAL */
+                if (entry->path[plen-1] == '/') {
+                    entry->is_dir = true;
                 } else {
-                    entry->flags |= 2; /* META */
+                    entry->is_file = true;
+                }
+                if (entry->path[0] == '/') {
+                    if (entry->path[1] == '#' || entry->path[1] == '$') {
+                        entry->is_special = true;
+                    } else {
+                        entry->is_normal = true;
+                    }
+                } else {
+                    entry->is_meta = true;
                 }
             }
 
-            ctx->unit_ptrs[idx] = entry;
+            ctx->entry_ptrs[idx] = entry;
             idx++;
         }
         page = header.block_next;
     }
 
-    ctx->unit_count = idx;
+    ctx->entry_count = idx;
     dir_session_end(&session);
-    return ctx->unit_count;
+    return ctx->entry_count;
 }
 
 int chm_get_entries(chm_ctx *ctx, struct chm_entry ***outEntries) {
-    if (!ctx || !ctx->data || ctx->unit_count <= 0) {
+    if (!ctx || !ctx->data || ctx->entry_count <= 0) {
         if (outEntries) *outEntries = NULL;
         return 0;
     }
-    if (outEntries) *outEntries = ctx->unit_ptrs;
-    return ctx->unit_count;
+    if (outEntries) *outEntries = ctx->entry_ptrs;
+    return ctx->entry_count;
 }
 
 bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
@@ -580,8 +586,8 @@ bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
      */
     if (ctx->index_root <= -1) ctx->index_root = ctx->index_head;
 
-    /* collect all units (always everything, no filtering) */
-    collect_units(ctx);
+    /* collect all entries (always everything, no filtering) */
+    collect_entries(ctx);
 
     /* By default, compression is enabled. */
     ctx->compression_enabled = 1;
@@ -613,11 +619,11 @@ bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
     }
 #endif
 
-    /* prefetch most commonly needed unit infos */
-    if (CHM_RESOLVE_SUCCESS != chm_resolve_object(ctx, _CHMU_RESET_TABLE, &ctx->rt_unit) ||
-        ctx->rt_unit.is_compressed ||
-        CHM_RESOLVE_SUCCESS != chm_resolve_object(ctx, _CHMU_CONTENT, &ctx->cn_unit) ||
-        ctx->cn_unit.is_compressed ||
+    /* prefetch most commonly needed entry infos */
+    if (CHM_RESOLVE_SUCCESS != chm_resolve_object(ctx, _CHMU_RESET_TABLE, &ctx->rt_entry) ||
+        ctx->rt_entry.is_compressed ||
+        CHM_RESOLVE_SUCCESS != chm_resolve_object(ctx, _CHMU_CONTENT, &ctx->cn_entry) ||
+        ctx->cn_entry.is_compressed ||
         CHM_RESOLVE_SUCCESS != chm_resolve_object(ctx, _CHMU_LZXC_CONTROLDATA, &uiLzxc) ||
         uiLzxc.is_compressed) {
         ctx->compression_enabled = 0;
@@ -627,7 +633,7 @@ bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
     if (ctx->compression_enabled) {
         sremain = _CHM_LZXC_RESETTABLE_V1_LEN;
         sbufpos = sbuffer;
-        ok = retrieve_object_range(ctx, &ctx->rt_unit, sbuffer, 0, sremain) == sremain;
+        ok = retrieve_object_range(ctx, &ctx->rt_entry, sbuffer, 0, sremain) == sremain;
         if (ok) {
             ok = _unmarshal_lzxc_reset_table(&sbufpos, &sremain, &ctx->reset_table);
         }
@@ -690,15 +696,15 @@ void chm_close(chm_ctx *ctx)
     ctx->cache_block_indices = NULL;
 
     /* clear archive fields (keep alloc/free/error/user) */
-    if (ctx->units) {
-        for (int i = 0; i < ctx->unit_count; i++) {
-            chm_free(ctx, ctx->units[i].path);
+    if (ctx->entries) {
+        for (int i = 0; i < ctx->entry_count; i++) {
+            chm_free(ctx, ctx->entries[i].path);
         }
-        chm_free(ctx, ctx->units);
-        chm_free(ctx, ctx->unit_ptrs);
-        ctx->units = NULL;
-        ctx->unit_ptrs = NULL;
-        ctx->unit_count = 0;
+        chm_free(ctx, ctx->entries);
+        chm_free(ctx, ctx->entry_ptrs);
+        ctx->entries = NULL;
+        ctx->entry_ptrs = NULL;
+        ctx->entry_count = 0;
     }
 
     ctx->data = NULL;
@@ -711,8 +717,8 @@ void chm_close(chm_ctx *ctx)
     ctx->index_head = 0;
     ctx->block_len = 0;
     ctx->span = 0;
-    memset(&ctx->rt_unit, 0, sizeof(ctx->rt_unit));
-    memset(&ctx->cn_unit, 0, sizeof(ctx->cn_unit));
+    memset(&ctx->rt_entry, 0, sizeof(ctx->rt_entry));
+    memset(&ctx->cn_entry, 0, sizeof(ctx->cn_entry));
     memset(&ctx->reset_table, 0, sizeof(ctx->reset_table));
     ctx->compression_enabled = 0;
     ctx->window_size = 0;
@@ -1002,7 +1008,7 @@ static int get_cmpblock_bounds(chm_ctx *ctx, uint64_t block, uint64_t* start, in
         dummy = buffer;
         remain = 8;
         if (!add_u64((uint64_t)ctx->reset_table.table_offset, block_entry_offset, &table_addr)) return 0;
-        if (!get_object_offset(ctx, &ctx->rt_unit, table_addr, remain, &table_offset) ||
+        if (!get_object_offset(ctx, &ctx->rt_entry, table_addr, remain, &table_offset) ||
             fetch_bytes(ctx, buffer, table_offset, remain) != remain || !_unmarshal_uint64(&dummy, &remain, start))
             return 0;
 
@@ -1010,7 +1016,7 @@ static int get_cmpblock_bounds(chm_ctx *ctx, uint64_t block, uint64_t* start, in
         dummy = buffer;
         remain = 8;
         if (!add_u64(table_addr, 8, &table_addr)) return 0;
-        if (!get_object_offset(ctx, &ctx->rt_unit, table_addr, remain, &table_offset) ||
+        if (!get_object_offset(ctx, &ctx->rt_entry, table_addr, remain, &table_offset) ||
             fetch_bytes(ctx, buffer, table_offset, remain) != remain || !_unmarshal_int64(&dummy, &remain, len))
             return 0;
     }
@@ -1021,7 +1027,7 @@ static int get_cmpblock_bounds(chm_ctx *ctx, uint64_t block, uint64_t* start, in
         dummy = buffer;
         remain = 8;
         if (!add_u64((uint64_t)ctx->reset_table.table_offset, block_entry_offset, &table_addr)) return 0;
-        if (!get_object_offset(ctx, &ctx->rt_unit, table_addr, remain, &table_offset) ||
+        if (!get_object_offset(ctx, &ctx->rt_entry, table_addr, remain, &table_offset) ||
             fetch_bytes(ctx, buffer, table_offset, remain) != remain || !_unmarshal_uint64(&dummy, &remain, start))
             return 0;
 
@@ -1033,7 +1039,7 @@ static int get_cmpblock_bounds(chm_ctx *ctx, uint64_t block, uint64_t* start, in
         return 0; // Invalid block bounds
     }
     *len -= *start;
-    if (!get_object_offset(ctx, &ctx->cn_unit, *start, *len, &abs_start)) return 0;
+    if (!get_object_offset(ctx, &ctx->cn_entry, *start, *len, &abs_start)) return 0;
     *start = abs_start;
 
     return 1;
@@ -1237,4 +1243,4 @@ int64_t chm_read_entry(chm_ctx *ctx, struct chm_entry *entry, uint8_t *buf) {
     return retrieve_object_range(ctx, entry, buf, 0, entry->length);
 }
 
-/* enumeration API removed; units are collected into ctx->units at open time */
+/* enumeration API removed; entries are collected into ctx->entries at open time */

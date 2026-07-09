@@ -49,7 +49,7 @@ void chm_close(chm_ctx *ctx);
 #define CHM_PARAM_MAX_BLOCKS_CACHED 0
 void chm_set_param(chm_ctx *ctx, int paramType, int paramVal);
 
-/* ----- units (files/directories inside the archive) ----- */
+/* ----- entries (files/directories inside the archive) ----- */
 
 /* chm_entry describes one entry inside the CHM.
    The 'path' string is allocated and owned by the chm_ctx; it is valid
@@ -58,7 +58,11 @@ struct chm_entry {
     uint64_t start;
     uint64_t length;
     bool is_compressed;
-    int flags;
+    bool is_dir;
+    bool is_file;
+    bool is_normal;
+    bool is_meta;
+    bool is_special;
     char *path;
 };
 

@@ -6,9 +6,9 @@ Plain-C, read-only CHM/ITSS archive library. Ported/cleaned from CHMLib (Jed Win
 Read-only. Caller hands the entire .chm as an in-memory buffer.
 We provide:
 - open / close
-- resolve path -> chm_entry (offset/len/space/flags)
-- retrieve bytes for a unit
-- enumerate units (files/dirs/meta)
+- chm_entry (start, length, is_compressed, is_dir/is_file, is_normal/is_meta/is_special, path)
+- retrieve bytes for an entry
+- get all entries (files/dirs/meta)
 
 No writers. No FS I/O.
 

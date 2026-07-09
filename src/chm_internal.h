@@ -275,7 +275,7 @@ struct chmDirSession {
     uint8_t *page_buf_end;
 };
 
-/* no more callback enumeration; units are collected into ctx at open time */
+/* no more callback enumeration; entries are collected into ctx at open time */
 
 /* concrete ctx definition (after all structs it references) */
 struct chm_ctx {
@@ -296,8 +296,8 @@ struct chm_ctx {
     uint32_t block_len;
 
     uint64_t span;
-    struct chm_entry rt_unit;
-    struct chm_entry cn_unit;
+    struct chm_entry rt_entry;
+    struct chm_entry cn_entry;
     struct chmLzxcResetTable reset_table;
 
     /* LZX control */
@@ -319,10 +319,10 @@ struct chm_ctx {
     uint64_t dir_pages_seen;
     uint32_t dir_seen_bitmap[CHM_DIR_SEEN_BITMAP_WORDS];
 
-    /* all units collected at open time; freed on close */
-    struct chm_entry *units;
-    int unit_count;
-    struct chm_entry **unit_ptrs;
+    /* all entries collected at open time; freed on close */
+    struct chm_entry *entries;
+    int entry_count;
+    struct chm_entry **entry_ptrs;
 };
 
 #endif /* CHM_INTERNAL_H */

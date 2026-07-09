@@ -5,9 +5,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void print_unit(struct chm_entry *entry)
+static void print_entry(struct chm_entry *entry)
 {
-    const char *type = (entry->flags & 16) ? "dir" : "file";
+    const char *type = entry->is_dir ? "dir" : "file";
     printf("  %s %s (len=%llu compressed=%d)\n", type, entry->path ? entry->path : "", (unsigned long long)entry->length, entry->is_compressed);
 }
 
@@ -69,11 +69,11 @@ int main(int argc, char **argv)
     printf("opened %s (%ld bytes)\n", path, sz);
 
     if (do_list) {
-        struct chm_entry **units = NULL;
-        int n = chm_get_entries(ctx, &units);
+        struct chm_entry **entries = NULL;
+        int n = chm_get_entries(ctx, &entries);
         printf("entries (%d):\n", n);
         for (int i = 0; i < n; i++) {
-            print_unit(units[i]);
+            print_entry(entries[i]);
         }
     }
 
