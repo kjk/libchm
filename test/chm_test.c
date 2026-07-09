@@ -5,10 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-static void print_unit(struct chmUnitInfo *ui)
+static void print_unit(struct chm_entry *entry)
 {
-    const char *type = (ui->flags & 16) ? "dir" : "file";
-    printf("  %s %s (len=%llu space=%d)\n", type, ui->path ? ui->path : "", (unsigned long long)ui->length, ui->space);
+    const char *type = (entry->flags & 16) ? "dir" : "file";
+    printf("  %s %s (len=%llu compressed=%d)\n", type, entry->path ? entry->path : "", (unsigned long long)entry->length, entry->is_compressed);
 }
 
 int main(int argc, char **argv)
@@ -69,8 +69,8 @@ int main(int argc, char **argv)
     printf("opened %s (%ld bytes)\n", path, sz);
 
     if (do_list) {
-        struct chmUnitInfo **units = NULL;
-        int n = chm_get_units(ctx, &units);
+        struct chm_entry **units = NULL;
+        int n = chm_get_entries(ctx, &units);
         printf("entries (%d):\n", n);
         for (int i = 0; i < n; i++) {
             print_unit(units[i]);

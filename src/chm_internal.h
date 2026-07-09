@@ -296,8 +296,8 @@ struct chm_ctx {
     uint32_t block_len;
 
     uint64_t span;
-    struct chmUnitInfo rt_unit;
-    struct chmUnitInfo cn_unit;
+    struct chm_entry rt_unit;
+    struct chm_entry cn_unit;
     struct chmLzxcResetTable reset_table;
 
     /* LZX control */
@@ -320,9 +320,9 @@ struct chm_ctx {
     uint32_t dir_seen_bitmap[CHM_DIR_SEEN_BITMAP_WORDS];
 
     /* all units collected at open time; freed on close */
-    struct chmUnitInfo *units;
+    struct chm_entry *units;
     int unit_count;
-    struct chmUnitInfo **unit_ptrs;
+    struct chm_entry **unit_ptrs;
 };
 
 #endif /* CHM_INTERNAL_H */

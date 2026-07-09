@@ -6,14 +6,14 @@ Plain-C, read-only CHM/ITSS archive library. Ported/cleaned from CHMLib (Jed Win
 Read-only. Caller hands the entire .chm as an in-memory buffer.
 We provide:
 - open / close
-- resolve path -> chmUnitInfo (offset/len/space/flags)
+- resolve path -> chm_entry (offset/len/space/flags)
 - retrieve bytes for a unit
 - enumerate units (files/dirs/meta)
 
 No writers. No FS I/O.
 
 ## Layout (mimics djvudec)
-- src/chm.h            — public API (ctx + chmFile opaque, chmUnitInfo, resolve/retrieve/enumerate)
+- src/chm.h            — public API (ctx + chmFile opaque, chm_entry, resolve/retrieve/enumerate)
 - src/chm_internal.h   — one internal header with structs, helpers, LZX
 - src/chm.c            — main logic
 - src/lzx.c            — LZX decompressor

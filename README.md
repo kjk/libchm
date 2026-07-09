@@ -14,7 +14,7 @@ See `src/chm.h`. Basic usage:
 
 ```c
 chmFile *chm = chm_open(NULL, data, len);   /* data must outlive chm */
-struct chmUnitInfo ui;
+struct chm_entry entry;
 if (chm_resolve_object(chm, "/foo/bar.html", &ui) == CHM_RESOLVE_SUCCESS) {
     uint8_t *buf = ...;
     chm_retrieve_object(chm, &ui, buf, 0, ui.length);

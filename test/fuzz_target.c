@@ -15,7 +15,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     }
 
     /* drive common surface */
-    struct chmUnitInfo ui;
+    struct chm_entry ui;
     chm_resolve_object(ctx, "/", &ui);
     chm_resolve_object(ctx, "/#SYSTEM", &ui);
 
@@ -23,8 +23,8 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     chm_retrieve_object(ctx, &ui, buf, 0, sizeof(buf));
 
     /* get all units */
-    struct chmUnitInfo **units = NULL;
-    int n = chm_get_units(ctx, &units);
+    struct chm_entry **units = NULL;
+    int n = chm_get_entries(ctx, &units);
     (void)n;
 
     chm_close(ctx);

@@ -51,34 +51,30 @@ void chm_set_param(chm_ctx *ctx, int paramType, int paramVal);
 
 /* ----- units (files/directories inside the archive) ----- */
 
-/* chmUnitInfo describes one entry inside the CHM.
+/* chm_entry describes one entry inside the CHM.
    The 'path' string is allocated and owned by the chm_ctx; it is valid
    until chm_close and must not be freed by the caller. */
-struct chmUnitInfo {
+struct chm_entry {
     uint64_t start;
     uint64_t length;
-    int space;
+    bool is_compressed;
     int flags;
     char *path;
 };
 
-/* the two available spaces in a CHM file (only these two are used in practice) */
-#define CHM_UNCOMPRESSED (0)
-#define CHM_COMPRESSED (1)
-
 /* resolve a particular object from the archive */
 #define CHM_RESOLVE_SUCCESS (0)
 #define CHM_RESOLVE_FAILURE (1)
-int chm_resolve_object(chm_ctx *ctx, const char *objPath, struct chmUnitInfo *ui);
+int chm_resolve_object(chm_ctx *ctx, const char *objPath, struct chm_entry *entry);
 
 /* retrieve part of an object from the archive */
-int64_t chm_retrieve_object(chm_ctx *ctx, struct chmUnitInfo *ui, uint8_t *buf,
+int64_t chm_retrieve_object(chm_ctx *ctx, struct chm_entry *entry, uint8_t *buf,
                              uint64_t addr, int64_t len);
 
-/* Return the number of units and set *outUnits to an internal array of
-   pointers to chmUnitInfo (the array and all strings are owned by ctx
+/* Return the number of entries and set *outEntries to an internal array of
+   pointers to chm_entry (the array and all strings are owned by ctx
    and are freed by chm_close). Returns 0 on error or if nothing is open. */
-int chm_get_units(chm_ctx *ctx, struct chmUnitInfo ***outUnits);
+int chm_get_entries(chm_ctx *ctx, struct chm_entry ***outEntries);
 
 #ifdef __cplusplus
 }
