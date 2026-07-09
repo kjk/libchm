@@ -274,6 +274,7 @@ chm_ctx *chm_ctx_new(chm_alloc_cb alloc, chm_free_cb free_cb,
     chm_alloc_cb a = alloc ? alloc : default_alloc;
     ctx = (chm_ctx *)a(user, NULL, sizeof(chm_ctx));
     if (!ctx) return NULL;
+    memset(ctx, 0, sizeof(*ctx));
     ctx->alloc = a;
     ctx->free = free_cb ? free_cb : default_free;
     ctx->error = error;

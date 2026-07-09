@@ -3,9 +3,10 @@
 //   bun cmd/fuzz.ts
 //   bun cmd/fuzz.ts -jobs 4
 //   bun cmd/fuzz.ts -repro fuzz/crashes/...
-import { existsSync, mkdirSync, readdirSync, copyFileSync } from "node:fs";
+import { $ } from "bun";
+import { existsSync, mkdirSync, readdirSync, copyFileSync, rmSync } from "node:fs";
 import { resolve, join } from "node:path";
-import { buildFuzz, FUZZ_EXE } from "./build-lib";
+import { buildFuzz } from "./build-lib";
 
 const ROOT = resolve(import.meta.dir, "..");
 const FUZZ = join(ROOT, "fuzz");
@@ -30,6 +31,7 @@ let maxLen = 4000000;
 let repro = "";
 let minimize = false;
 let clean = false;
+const extra: string[] = [];
 
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
@@ -39,7 +41,7 @@ for (let i = 0; i < args.length; i++) {
   else if (a === "-minimize") minimize = true;
   else if (a === "-clean") clean = true;
   else if (a === "-h" || a === "--help") usage();
-  else usage();
+  else extra.push(a);
 }
 
 async function main() {
@@ -47,8 +49,7 @@ async function main() {
   mkdirSync(CRASHES, { recursive: true });
   if (clean && existsSync(CORPUS)) {
     // keep crashes, nuke corpus to restart
-    const fs = await import("node:fs");
-    fs.rmSync(CORPUS, { recursive: true, force: true });
+    rmSync(CORPUS, { recursive: true, force: true });
     mkdirSync(CORPUS, { recursive: true });
   }
 
@@ -66,17 +67,31 @@ async function main() {
   }
 
   if (repro) {
-    await $`${exe} ${repro}`.cwd(ROOT);
+    const reproPath = resolve(repro);
+    console.log("reproducing", reproPath);
+    const p = await $`${exe} ${reproPath} -artifact_prefix=${CRASHES}/ ${extra}`.cwd(ROOT).nothrow();
+    if (p.exitCode !== 0) {
+      console.log("repro exited with code", p.exitCode, "(crash reproduced or error)");
+    }
     return;
   }
   if (minimize) {
-    await $`${exe} -merge=1 ${CORPUS} ${CORPUS}`.cwd(ROOT);
+    const minimized = join(FUZZ, "minimized");
+    mkdirSync(minimized, { recursive: true });
+    console.log("minimizing corpus into", minimized);
+    await $`${exe} -merge=1 ${minimized} ${CORPUS} ${extra}`.cwd(ROOT);
+    console.log("minimized corpus is in", minimized);
+    console.log("to replace: rm -rf", CORPUS, "&& mv", minimized, CORPUS);
     return;
   }
 
-  const flags = [`-jobs=${jobs}`, `-max_len=${maxLen}`, CORPUS];
+  const flags = [`-jobs=${jobs}`, `-max_len=${maxLen}`, `-artifact_prefix=${CRASHES}/`, CORPUS, ...extra];
   console.log("starting fuzzer (Ctrl-C to stop; rerun to resume)");
-  await $`${exe} ${flags}`.cwd(ROOT);
+  const p = await $`${exe} ${flags}`.cwd(ROOT).nothrow();
+  if (p.exitCode !== 0) {
+    console.log("fuzzer exited with code", p.exitCode);
+    console.log("check", CRASHES, "for any new crash files, and/or the seed corpus for bad inputs.");
+  }
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });
