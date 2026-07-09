@@ -1,0 +1,4 @@
+-I/Users/kjk/src/exp/libchm/src
+-Wall
+-Werror
+-std=c11
