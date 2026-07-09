@@ -10,6 +10,7 @@
 #ifndef CHM_H
 #define CHM_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -28,7 +29,6 @@ typedef void  (*chm_free_cb)(void *user, void *ctx, void *ptr);
 typedef void (*chm_error_cb)(void *user, int severity, const char *msg);
 
 typedef struct chm_ctx chm_ctx;
-typedef struct chmFile chmFile;  /* opaque handle for an open archive */
 
 /* Pass NULL for alloc/free to use the default malloc/free.
    Pass NULL for error to silently ignore diagnostics. */
@@ -39,14 +39,15 @@ void chm_ctx_free(chm_ctx *ctx);
 /* ----- archives ----- */
 
 /* Open an archive over an in-memory buffer (NOT copied; must remain valid
-   until chm_close). Returns NULL on failure (diagnostics via error cb if set).
-   This is the only open entrypoint (in-memory only, like djvudec). */
-chmFile *chm_open(chm_ctx *ctx, const uint8_t *data, size_t len);
-void chm_close(chmFile *h);
+   until chm_close). The archive state lives inside the ctx.
+   Returns true on success, false on failure (diagnostics via error cb if set).
+   This is the only open entrypoint (in-memory only). */
+bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len);
+void chm_close(chm_ctx *ctx);
 
 /* methods for setting tuning parameters for particular file */
 #define CHM_PARAM_MAX_BLOCKS_CACHED 0
-void chm_set_param(chmFile *h, int paramType, int paramVal);
+void chm_set_param(chm_ctx *ctx, int paramType, int paramVal);
 
 /* ----- units (files/directories inside the archive) ----- */
 
@@ -67,14 +68,14 @@ struct chmUnitInfo {
 /* resolve a particular object from the archive */
 #define CHM_RESOLVE_SUCCESS (0)
 #define CHM_RESOLVE_FAILURE (1)
-int chm_resolve_object(chmFile *h, const char *objPath, struct chmUnitInfo *ui);
+int chm_resolve_object(chm_ctx *ctx, const char *objPath, struct chmUnitInfo *ui);
 
 /* retrieve part of an object from the archive */
-int64_t chm_retrieve_object(chmFile *h, struct chmUnitInfo *ui, uint8_t *buf,
+int64_t chm_retrieve_object(chm_ctx *ctx, struct chmUnitInfo *ui, uint8_t *buf,
                              uint64_t addr, int64_t len);
 
 /* enumerate the objects in the .chm archive */
-typedef int (*CHM_ENUMERATOR)(chmFile *h, struct chmUnitInfo *ui, void *context);
+typedef int (*CHM_ENUMERATOR)(chm_ctx *ctx, struct chmUnitInfo *ui, void *context);
 
 #define CHM_ENUMERATE_NORMAL (1)
 #define CHM_ENUMERATE_META   (2)
@@ -87,8 +88,8 @@ typedef int (*CHM_ENUMERATOR)(chmFile *h, struct chmUnitInfo *ui, void *context)
 #define CHM_ENUMERATOR_CONTINUE (1)
 #define CHM_ENUMERATOR_SUCCESS (2)
 
-int chm_enumerate(chmFile *h, int what, CHM_ENUMERATOR e, void *context);
-int chm_enumerate_dir(chmFile *h, const char *prefix, int what,
+int chm_enumerate(chm_ctx *ctx, int what, CHM_ENUMERATOR e, void *context);
+int chm_enumerate_dir(chm_ctx *ctx, const char *prefix, int what,
                       CHM_ENUMERATOR e, void *context);
 
 #ifdef __cplusplus

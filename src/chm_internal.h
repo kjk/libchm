@@ -15,13 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* concrete ctx (declared opaque in chm.h) */
-struct chm_ctx {
-    chm_alloc_cb alloc;
-    chm_free_cb  free;
-    chm_error_cb error;
-    void *user;
-};
+/* concrete ctx (declared opaque in chm.h) -- defined after dependent structs below */
 
 #ifndef CHM_RESTRICT
 #if defined(_MSC_VER)
@@ -267,9 +261,48 @@ struct chmLzxcControlData {
     uint32_t unknown_18;
 };
 
-/* the main handle (was defined in chm_lib.c) */
-struct chmFile {
-    chm_ctx *ctx;          /* may be NULL for default alloc */
+/* archive state lives directly in chm_ctx (no separate chmFile) */
+
+/* allocator wrappers (ctx may be null -> defaults) */
+void *chm_alloc(chm_ctx *ctx, size_t size);
+void  chm_free(chm_ctx *ctx, void *ptr);
+void  chm_errorf(chm_ctx *ctx, int sev, const char *fmt, ...);
+
+/* dir session (used within chm.c) */
+struct chmDirSession {
+    chm_ctx *ctx;
+    uint8_t *page_buf;
+    uint8_t *page_buf_end;
+};
+
+/* enumerate helpers (used within chm.c) */
+struct chmEnumerateState {
+    CHM_ENUMERATOR e;
+    void *context;
+    int type_bits;
+    int filter_bits;
+};
+
+struct chmEnumerateDirState {
+    CHM_ENUMERATOR e;
+    void *context;
+    int type_bits;
+    int filter_bits;
+    int it_has_begun;
+    char prefixRectified[CHM_MAX_PATHLEN + 1];
+    int prefixLen;
+    char lastPath[CHM_MAX_PATHLEN + 1];
+    int lastPathLen;
+};
+
+/* concrete ctx definition (after all structs it references) */
+struct chm_ctx {
+    chm_alloc_cb alloc;
+    chm_free_cb  free;
+    chm_error_cb error;
+    void *user;
+
+    /* archive state */
     const uint8_t *data;   /* borrowed */
     size_t data_len;
 
@@ -303,38 +336,6 @@ struct chmFile {
     uint64_t dir_page_count;
     uint64_t dir_pages_seen;
     uint32_t dir_seen_bitmap[CHM_DIR_SEEN_BITMAP_WORDS];
-};
-
-/* allocator wrappers (ctx may be null -> defaults) */
-void *chm_alloc(chm_ctx *ctx, size_t size);
-void  chm_free(chm_ctx *ctx, void *ptr);
-void  chm_errorf(chm_ctx *ctx, int sev, const char *fmt, ...);
-
-/* dir session (used within chm.c) */
-struct chmDirSession {
-    struct chmFile *h;
-    uint8_t *page_buf;
-    uint8_t *page_buf_end;
-};
-
-/* enumerate helpers (used within chm.c) */
-struct chmEnumerateState {
-    CHM_ENUMERATOR e;
-    void *context;
-    int type_bits;
-    int filter_bits;
-};
-
-struct chmEnumerateDirState {
-    CHM_ENUMERATOR e;
-    void *context;
-    int type_bits;
-    int filter_bits;
-    int it_has_begun;
-    char prefixRectified[CHM_MAX_PATHLEN + 1];
-    int prefixLen;
-    char lastPath[CHM_MAX_PATHLEN + 1];
-    int lastPathLen;
 };
 
 #endif /* CHM_INTERNAL_H */

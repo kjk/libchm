@@ -5,7 +5,7 @@
 // dist/chm.h : copy of src/chm.h
 // dist/chm.c : src/chm.h + src/chm_internal.h + src/lzx.c + src/chm.c (with local includes stripped)
 import { $ } from "bun";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, rmSync } from "fs";
 import { join } from "path";
 
 const ROOT = `${import.meta.dir}/..`.replaceAll("\\", "/");
@@ -109,7 +109,11 @@ export async function buildDist() {
   // verify compiles
   const tmp = join(DIST, "chk.c");
   writeFileSync(tmp, `#include "chm.c"\n`);
-  await $`clang -fsyntax-only -I ${DIST} ${tmp}`.quiet();
+  try {
+    await $`clang -fsyntax-only -I ${DIST} ${tmp}`.quiet();
+  } finally {
+    rmSync(tmp, { force: true });
+  }
   console.log("dist/ updated and verified");
 }
 

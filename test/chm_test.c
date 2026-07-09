@@ -5,10 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int list_entry(chmFile *h, struct chmUnitInfo *ui, void *ctx)
+static int list_entry(chm_ctx *ctx, struct chmUnitInfo *ui, void *user)
 {
-    (void)h;
     (void)ctx;
+    (void)user;
     const char *type = (ui->flags & 2) ? "dir" : "file";
     printf("  %s %s (len=%llu space=%d)\n", type, ui->path, (unsigned long long)ui->length, ui->space);
     return CHM_ENUMERATOR_CONTINUE;
@@ -57,9 +57,15 @@ int main(int argc, char **argv)
     }
     fclose(f);
 
-    chmFile *h = chm_open(NULL, data, (size_t)sz);
-    if (!h) {
+    chm_ctx *ctx = chm_ctx_new(NULL, NULL, NULL, NULL);
+    if (!ctx) {
+        fprintf(stderr, "chm_ctx_new failed\n");
+        free(data);
+        return 1;
+    }
+    if (!chm_open(ctx, data, (size_t)sz)) {
         fprintf(stderr, "chm_open failed for %s\n", path);
+        chm_ctx_free(ctx);
         free(data);
         return 1;
     }
@@ -67,10 +73,11 @@ int main(int argc, char **argv)
 
     if (do_list) {
         printf("entries:\n");
-        chm_enumerate(h, CHM_ENUMERATE_ALL, list_entry, NULL);
+        chm_enumerate(ctx, CHM_ENUMERATE_ALL, list_entry, NULL);
     }
 
-    chm_close(h);
+    chm_close(ctx);
+    chm_ctx_free(ctx);
     free(data);
     printf("OK\n");
     return 0;
