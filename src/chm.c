@@ -54,24 +54,24 @@ static const char _CHMU_CONTENT[] = "::DataSpace/Storage/MSCompressed/Content";
 static const char _CHMU_SPANINFO[] = "::DataSpace/Storage/MSCompressed/SpanInfo";
 #endif
 
-/* ITSF/ITSP unmarshals (local, depend on markers in scope via internal) */
+/* ITSF/ITSP readers (local, depend on markers in scope via internal) */
 
-static int _unmarshal_itsf_header(uint8_t **pData, unsigned int *pDataLen, struct chmItsfHeader *dest)
+static int read_itsf_header(uint8_t **pData, unsigned int *pDataLen, struct chmItsfHeader *dest)
 {
     if (*pDataLen != _CHM_ITSF_V2_LEN && *pDataLen != _CHM_ITSF_V3_LEN) return 0;
 
-    _unmarshal_char_array(pData, pDataLen, dest->signature, 4);
-    _unmarshal_int32(pData, pDataLen, &dest->version);
-    _unmarshal_int32(pData, pDataLen, &dest->header_len);
-    _unmarshal_int32(pData, pDataLen, &dest->unknown_000c);
-    _unmarshal_uint32(pData, pDataLen, &dest->last_modified);
-    _unmarshal_uint32(pData, pDataLen, &dest->lang_id);
-    _unmarshal_uuid(pData, pDataLen, dest->dir_uuid);
-    _unmarshal_uuid(pData, pDataLen, dest->stream_uuid);
-    _unmarshal_uint64(pData, pDataLen, &dest->unknown_offset);
-    _unmarshal_uint64(pData, pDataLen, &dest->unknown_len);
-    _unmarshal_uint64(pData, pDataLen, &dest->dir_offset);
-    _unmarshal_uint64(pData, pDataLen, &dest->dir_len);
+    read_char_array(pData, pDataLen, dest->signature, 4);
+    read_i32(pData, pDataLen, &dest->version);
+    read_i32(pData, pDataLen, &dest->header_len);
+    read_i32(pData, pDataLen, &dest->unknown_000c);
+    read_u32(pData, pDataLen, &dest->last_modified);
+    read_u32(pData, pDataLen, &dest->lang_id);
+    read_uuid(pData, pDataLen, dest->dir_uuid);
+    read_uuid(pData, pDataLen, dest->stream_uuid);
+    read_u64(pData, pDataLen, &dest->unknown_offset);
+    read_u64(pData, pDataLen, &dest->unknown_len);
+    read_u64(pData, pDataLen, &dest->dir_offset);
+    read_u64(pData, pDataLen, &dest->dir_len);
 
     if (memcmp(dest->signature, "ITSF", 4) != 0) return 0;
     if (dest->version == 2) {
@@ -84,7 +84,7 @@ static int _unmarshal_itsf_header(uint8_t **pData, unsigned int *pDataLen, struc
 
     if (dest->version == 3) {
         if (*pDataLen != 0)
-            _unmarshal_uint64(pData, pDataLen, &dest->data_offset);
+            read_u64(pData, pDataLen, &dest->data_offset);
         else
             return 0;
     } else {
@@ -94,25 +94,25 @@ static int _unmarshal_itsf_header(uint8_t **pData, unsigned int *pDataLen, struc
     return 1;
 }
 
-static int _unmarshal_itsp_header(uint8_t **pData, unsigned int *pDataLen, struct chmItspHeader *dest)
+static int read_itsp_header(uint8_t **pData, unsigned int *pDataLen, struct chmItspHeader *dest)
 {
     if (*pDataLen != _CHM_ITSP_V1_LEN) return 0;
 
-    _unmarshal_char_array(pData, pDataLen, dest->signature, 4);
-    _unmarshal_int32(pData, pDataLen, &dest->version);
-    _unmarshal_int32(pData, pDataLen, &dest->header_len);
-    _unmarshal_int32(pData, pDataLen, &dest->unknown_000c);
-    _unmarshal_uint32(pData, pDataLen, &dest->block_len);
-    _unmarshal_int32(pData, pDataLen, &dest->blockidx_intvl);
-    _unmarshal_int32(pData, pDataLen, &dest->index_depth);
-    _unmarshal_int32(pData, pDataLen, &dest->index_root);
-    _unmarshal_int32(pData, pDataLen, &dest->index_head);
-    _unmarshal_int32(pData, pDataLen, &dest->unknown_0024);
-    _unmarshal_uint32(pData, pDataLen, &dest->num_blocks);
-    _unmarshal_int32(pData, pDataLen, &dest->unknown_002c);
-    _unmarshal_uint32(pData, pDataLen, &dest->lang_id);
-    _unmarshal_uuid(pData, pDataLen, dest->system_uuid);
-    _unmarshal_uchar_array(pData, pDataLen, dest->unknown_0044, 16);
+    read_char_array(pData, pDataLen, dest->signature, 4);
+    read_i32(pData, pDataLen, &dest->version);
+    read_i32(pData, pDataLen, &dest->header_len);
+    read_i32(pData, pDataLen, &dest->unknown_000c);
+    read_u32(pData, pDataLen, &dest->block_len);
+    read_i32(pData, pDataLen, &dest->blockidx_intvl);
+    read_i32(pData, pDataLen, &dest->index_depth);
+    read_i32(pData, pDataLen, &dest->index_root);
+    read_i32(pData, pDataLen, &dest->index_head);
+    read_i32(pData, pDataLen, &dest->unknown_0024);
+    read_u32(pData, pDataLen, &dest->num_blocks);
+    read_i32(pData, pDataLen, &dest->unknown_002c);
+    read_u32(pData, pDataLen, &dest->lang_id);
+    read_uuid(pData, pDataLen, dest->system_uuid);
+    read_uchar_array(pData, pDataLen, dest->unknown_0044, 16);
 
     if (memcmp(dest->signature, "ITSP", 4) != 0) return 0;
     if (dest->version != 1) return 0;
@@ -121,31 +121,31 @@ static int _unmarshal_itsp_header(uint8_t **pData, unsigned int *pDataLen, struc
     return 1;
 }
 
-static int _unmarshal_pmgi_header(uint8_t **pData, unsigned int *pDataLen, unsigned int blockLen,
+static int read_pmgi_header(uint8_t **pData, unsigned int *pDataLen, unsigned int blockLen,
                                   struct chmPmgiHeader *dest)
 {
     if (*pDataLen != _CHM_PMGI_LEN) return 0;
     if (blockLen < _CHM_PMGI_LEN) return 0;
 
-    _unmarshal_char_array(pData, pDataLen, dest->signature, 4);
-    _unmarshal_uint32(pData, pDataLen, &dest->free_space);
+    read_char_array(pData, pDataLen, dest->signature, 4);
+    read_u32(pData, pDataLen, &dest->free_space);
 
     if (memcmp(dest->signature, _chm_pmgi_marker, 4) != 0) return 0;
     if (dest->free_space > blockLen - _CHM_PMGI_LEN) return 0;
     return 1;
 }
 
-static int _unmarshal_lzxc_reset_table(uint8_t **pData, unsigned int *pDataLen, struct chmLzxcResetTable *dest)
+static int read_lzxc_reset_table(uint8_t **pData, unsigned int *pDataLen, struct chmLzxcResetTable *dest)
 {
     if (*pDataLen != _CHM_LZXC_RESETTABLE_V1_LEN) return 0;
 
-    _unmarshal_uint32(pData, pDataLen, &dest->version);
-    _unmarshal_uint32(pData, pDataLen, &dest->block_count);
-    _unmarshal_uint32(pData, pDataLen, &dest->unknown);
-    _unmarshal_uint32(pData, pDataLen, &dest->table_offset);
-    _unmarshal_uint64(pData, pDataLen, &dest->uncompressed_len);
-    _unmarshal_uint64(pData, pDataLen, &dest->compressed_len);
-    _unmarshal_uint64(pData, pDataLen, &dest->block_len);
+    read_u32(pData, pDataLen, &dest->version);
+    read_u32(pData, pDataLen, &dest->block_count);
+    read_u32(pData, pDataLen, &dest->unknown);
+    read_u32(pData, pDataLen, &dest->table_offset);
+    read_u64(pData, pDataLen, &dest->uncompressed_len);
+    read_u64(pData, pDataLen, &dest->compressed_len);
+    read_u64(pData, pDataLen, &dest->block_len);
 
     if (dest->version != 2) return 0;
     if (dest->block_count == 0) return 0;
@@ -218,38 +218,38 @@ void chm_ctx_free(chm_ctx *ctx)
     }
 }
 
-/* PMGL unmarshal (marker is in internal.h) */
+/* PMGL reader (marker is in internal.h) */
 
-static int _unmarshal_pmgl_header(uint8_t **pData, unsigned int *pDataLen, unsigned int blockLen,
+static int read_pmgl_header(uint8_t **pData, unsigned int *pDataLen, unsigned int blockLen,
                                   struct chmPmglHeader *dest)
 {
     if (*pDataLen != _CHM_PMGL_LEN) return 0;
     if (blockLen < _CHM_PMGL_LEN) return 0;
 
-    _unmarshal_char_array(pData, pDataLen, dest->signature, 4);
-    _unmarshal_uint32(pData, pDataLen, &dest->free_space);
-    _unmarshal_uint32(pData, pDataLen, &dest->unknown_0008);
-    _unmarshal_int32(pData, pDataLen, &dest->block_prev);
-    _unmarshal_int32(pData, pDataLen, &dest->block_next);
+    read_char_array(pData, pDataLen, dest->signature, 4);
+    read_u32(pData, pDataLen, &dest->free_space);
+    read_u32(pData, pDataLen, &dest->unknown_0008);
+    read_i32(pData, pDataLen, &dest->block_prev);
+    read_i32(pData, pDataLen, &dest->block_next);
 
     if (memcmp(dest->signature, _chm_pmgl_marker, 4) != 0) return 0;
     if (dest->free_space > blockLen - _CHM_PMGL_LEN) return 0;
     return 1;
 }
 
-static int _unmarshal_lzxc_control_data(uint8_t **pData, unsigned int *pDataLen, struct chmLzxcControlData *dest)
+static int read_lzxc_control_data(uint8_t **pData, unsigned int *pDataLen, struct chmLzxcControlData *dest)
 {
     if (*pDataLen < _CHM_LZXC_MIN_LEN) return 0;
 
-    _unmarshal_uint32(pData, pDataLen, &dest->size);
-    _unmarshal_char_array(pData, pDataLen, dest->signature, 4);
-    _unmarshal_uint32(pData, pDataLen, &dest->version);
-    _unmarshal_uint32(pData, pDataLen, &dest->resetInterval);
-    _unmarshal_uint32(pData, pDataLen, &dest->windowSize);
-    _unmarshal_uint32(pData, pDataLen, &dest->windowsPerReset);
+    read_u32(pData, pDataLen, &dest->size);
+    read_char_array(pData, pDataLen, dest->signature, 4);
+    read_u32(pData, pDataLen, &dest->version);
+    read_u32(pData, pDataLen, &dest->resetInterval);
+    read_u32(pData, pDataLen, &dest->windowSize);
+    read_u32(pData, pDataLen, &dest->windowsPerReset);
 
     if (*pDataLen >= _CHM_LZXC_V2_LEN)
-        _unmarshal_uint32(pData, pDataLen, &dest->unknown_18);
+        read_u32(pData, pDataLen, &dest->unknown_18);
     else
         dest->unknown_18 = 0;
 
@@ -417,7 +417,7 @@ static int collect_entries(chm_ctx *ctx) {
         if (memcmp(session.page_buf, _chm_pmgl_marker, 4) == 0) {
             cur = session.page_buf;
             remain = _CHM_PMGL_LEN;
-            if (_unmarshal_pmgl_header(&cur, &remain, ctx->block_len, &header)) {
+            if (read_pmgl_header(&cur, &remain, ctx->block_len, &header)) {
                 end = session.page_buf + ctx->block_len - (header.free_space);
                 while (cur < end) {
                     uint64_t nlen;
@@ -463,7 +463,7 @@ static int collect_entries(chm_ctx *ctx) {
         }
         cur = session.page_buf;
         remain = _CHM_PMGL_LEN;
-        if (!_unmarshal_pmgl_header(&cur, &remain, ctx->block_len, &header)) break;
+        if (!read_pmgl_header(&cur, &remain, ctx->block_len, &header)) break;
         end = session.page_buf + ctx->block_len - (header.free_space);
 
         while (cur < end && idx < count) {
@@ -541,7 +541,7 @@ bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
     sbufpos = sbuffer;
     ok = fetch_bytes(ctx, sbuffer, (uint64_t)0, sremain) == sremain;
     if (ok) {
-        ok = _unmarshal_itsf_header(&sbufpos, &sremain, &itsfHeader);
+        ok = read_itsf_header(&sbufpos, &sremain, &itsfHeader);
     }
     if (!ok) {
         chm_close(ctx);
@@ -558,7 +558,7 @@ bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
     sbufpos = sbuffer;
     ok = fetch_bytes(ctx, sbuffer, (uint64_t)itsfHeader.dir_offset, sremain) == sremain;
     if (ok) {
-        ok = _unmarshal_itsp_header(&sbufpos, &sremain, &itspHeader);
+        ok = read_itsp_header(&sbufpos, &sremain, &itspHeader);
     }
     if (!ok) {
         chm_close(ctx);
@@ -612,7 +612,7 @@ bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
     sbufpos = sbuffer;
     if (retrieve_object_range(ctx, &uiSpan, sbuffer,
                             0, sremain) != sremain                        ||
-        !_unmarshal_uint64(&sbufpos, &sremain, &ctx->span))
+        !read_u64(&sbufpos, &sremain, &ctx->span))
     {
         chm_close(ctx);
         return NULL;
@@ -635,7 +635,7 @@ bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
         sbufpos = sbuffer;
         ok = retrieve_object_range(ctx, &ctx->rt_entry, sbuffer, 0, sremain) == sremain;
         if (ok) {
-            ok = _unmarshal_lzxc_reset_table(&sbufpos, &sremain, &ctx->reset_table);
+            ok = read_lzxc_reset_table(&sbufpos, &sremain, &ctx->reset_table);
         }
         if (!ok) {
             ctx->compression_enabled = 0;
@@ -652,7 +652,7 @@ bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
 
         sbufpos = sbuffer;
         if (retrieve_object_range(ctx, &uiLzxc, sbuffer, 0, sremain) != sremain ||
-            !_unmarshal_lzxc_control_data(&sbufpos, &sremain, &ctlData)) {
+            !read_lzxc_control_data(&sbufpos, &sremain, &ctlData)) {
             ctx->compression_enabled = 0;
         } else /* SumatraPDF: prevent division by zero */
         {
@@ -884,7 +884,7 @@ static uint8_t* find_in_PMGL(uint8_t* page_buf, uint32_t block_len, const char* 
     /* figure out where to start and end */
     cur = page_buf;
     hremain = _CHM_PMGL_LEN;
-    if (!_unmarshal_pmgl_header(&cur, &hremain, block_len, &header)) return NULL;
+    if (!read_pmgl_header(&cur, &hremain, block_len, &header)) return NULL;
     end = page_buf + block_len - (header.free_space);
 
     /* now, scan progressively */
@@ -922,7 +922,7 @@ static int32_t find_in_PMGI(uint8_t* page_buf, uint32_t block_len, const char* o
     /* figure out where to start and end */
     cur = page_buf;
     hremain = _CHM_PMGI_LEN;
-    if (!_unmarshal_pmgi_header(&cur, &hremain, block_len, &header)) return -1;
+    if (!read_pmgi_header(&cur, &hremain, block_len, &header)) return -1;
     end = page_buf + block_len - (header.free_space);
 
     /* now, scan progressively */
@@ -1009,7 +1009,7 @@ static int get_cmpblock_bounds(chm_ctx *ctx, uint64_t block, uint64_t* start, in
         remain = 8;
         if (!add_u64((uint64_t)ctx->reset_table.table_offset, block_entry_offset, &table_addr)) return 0;
         if (!get_object_offset(ctx, &ctx->rt_entry, table_addr, remain, &table_offset) ||
-            fetch_bytes(ctx, buffer, table_offset, remain) != remain || !_unmarshal_uint64(&dummy, &remain, start))
+            fetch_bytes(ctx, buffer, table_offset, remain) != remain || !read_u64(&dummy, &remain, start))
             return 0;
 
         /* unpack the end address */
@@ -1017,7 +1017,7 @@ static int get_cmpblock_bounds(chm_ctx *ctx, uint64_t block, uint64_t* start, in
         remain = 8;
         if (!add_u64(table_addr, 8, &table_addr)) return 0;
         if (!get_object_offset(ctx, &ctx->rt_entry, table_addr, remain, &table_offset) ||
-            fetch_bytes(ctx, buffer, table_offset, remain) != remain || !_unmarshal_int64(&dummy, &remain, len))
+            fetch_bytes(ctx, buffer, table_offset, remain) != remain || !read_i64(&dummy, &remain, len))
             return 0;
     }
 
@@ -1028,7 +1028,7 @@ static int get_cmpblock_bounds(chm_ctx *ctx, uint64_t block, uint64_t* start, in
         remain = 8;
         if (!add_u64((uint64_t)ctx->reset_table.table_offset, block_entry_offset, &table_addr)) return 0;
         if (!get_object_offset(ctx, &ctx->rt_entry, table_addr, remain, &table_offset) ||
-            fetch_bytes(ctx, buffer, table_offset, remain) != remain || !_unmarshal_uint64(&dummy, &remain, start))
+            fetch_bytes(ctx, buffer, table_offset, remain) != remain || !read_u64(&dummy, &remain, start))
             return 0;
 
         *len = ctx->reset_table.compressed_len;

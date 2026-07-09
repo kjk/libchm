@@ -107,8 +107,8 @@ int LZX_test_pretree_make_decode_table(void); /* test helper */
 #define strncasecmp _strnicmp
 #endif
 
-/* unmarshal helpers (internal) */
-static inline int _unmarshal_char_array(uint8_t **pData, unsigned int *pLenRemain, char *dest, int count)
+/* read helpers (internal) */
+static inline int read_char_array(uint8_t **pData, unsigned int *pLenRemain, char *dest, int count)
 {
     if (count <= 0 || (unsigned int)count > *pLenRemain) return 0;
     memcpy(dest, *pData, (size_t)count);
@@ -117,7 +117,7 @@ static inline int _unmarshal_char_array(uint8_t **pData, unsigned int *pLenRemai
     return 1;
 }
 
-static inline int _unmarshal_uchar_array(uint8_t **pData, unsigned int *pLenRemain, uint8_t *dest, int count)
+static inline int read_uchar_array(uint8_t **pData, unsigned int *pLenRemain, uint8_t *dest, int count)
 {
     if (count <= 0 || (unsigned int)count > *pLenRemain) return 0;
     memcpy(dest, *pData, (size_t)count);
@@ -126,7 +126,7 @@ static inline int _unmarshal_uchar_array(uint8_t **pData, unsigned int *pLenRema
     return 1;
 }
 
-static inline int _unmarshal_int32(uint8_t **pData, unsigned int *pLenRemain, int32_t *dest)
+static inline int read_i32(uint8_t **pData, unsigned int *pLenRemain, int32_t *dest)
 {
     if (4 > *pLenRemain) return 0;
     *dest = (*pData)[0] | ((*pData)[1] << 8) | ((*pData)[2] << 16) | ((*pData)[3] << 24);
@@ -135,7 +135,7 @@ static inline int _unmarshal_int32(uint8_t **pData, unsigned int *pLenRemain, in
     return 1;
 }
 
-static inline int _unmarshal_uint32(uint8_t **pData, unsigned int *pLenRemain, uint32_t *dest)
+static inline int read_u32(uint8_t **pData, unsigned int *pLenRemain, uint32_t *dest)
 {
     if (4 > *pLenRemain) return 0;
     *dest = (*pData)[0] | ((*pData)[1] << 8) | ((*pData)[2] << 16) | ((*pData)[3] << 24);
@@ -144,7 +144,7 @@ static inline int _unmarshal_uint32(uint8_t **pData, unsigned int *pLenRemain, u
     return 1;
 }
 
-static inline int _unmarshal_int64(uint8_t **pData, unsigned int *pLenRemain, int64_t *dest)
+static inline int read_i64(uint8_t **pData, unsigned int *pLenRemain, int64_t *dest)
 {
     int64_t temp = 0;
     if (8 > *pLenRemain) return 0;
@@ -158,7 +158,7 @@ static inline int _unmarshal_int64(uint8_t **pData, unsigned int *pLenRemain, in
     return 1;
 }
 
-static inline int _unmarshal_uint64(uint8_t **pData, unsigned int *pLenRemain, uint64_t *dest)
+static inline int read_u64(uint8_t **pData, unsigned int *pLenRemain, uint64_t *dest)
 {
     uint64_t temp = 0;
     if (8 > *pLenRemain) return 0;
@@ -172,9 +172,9 @@ static inline int _unmarshal_uint64(uint8_t **pData, unsigned int *pLenRemain, u
     return 1;
 }
 
-static inline int _unmarshal_uuid(uint8_t **pData, unsigned int *pDataLen, uint8_t *dest)
+static inline int read_uuid(uint8_t **pData, unsigned int *pDataLen, uint8_t *dest)
 {
-    return _unmarshal_uchar_array(pData, pDataLen, dest, 16);
+    return read_uchar_array(pData, pDataLen, dest, 16);
 }
 
 /* header structs (kept internal) */
