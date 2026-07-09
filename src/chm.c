@@ -532,14 +532,6 @@ static int parse_PMGL_entry(chm_ctx *ctx, uint8_t** pEntry, uint8_t* end, struct
     return 1;
 }
 
-/* forward decl for retrieve helper (defined after open logic) */
-static int64_t read_entry_range(chm_ctx *ctx, struct chm_entry* entry, uint8_t* buf, uint64_t addr, int64_t len);
-
-/* internal resolve (not part of public API) */
-#define CHM_RESOLVE_SUCCESS (0)
-#define CHM_RESOLVE_FAILURE (1)
-static int chm_resolve_entry(chm_ctx *ctx, const char* objPath, struct chm_entry* entry);
-
 /* collect every entry in the archive into ctx->entries / ctx->entry_ptrs */
 static int collect_entries(chm_ctx *ctx) {
     struct chmDirSession session;
@@ -656,209 +648,6 @@ int chm_get_entries(chm_ctx *ctx, struct chm_entry ***outEntries) {
     return ctx->entry_count;
 }
 
-bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
-{
-    uint8_t sbuffer[256];
-    unsigned int sremain;
-    uint8_t *sbufpos;
-    struct chmItsfHeader itsfHeader = {0};
-    struct chmItspHeader itspHeader = {0};
-#if 0
-    struct chm_entry uiSpan;
-#endif
-    struct chm_entry uiLzxc = {0};
-    struct chmLzxcControlData ctlData;
-    int ok;
-
-    if (!ctx) return false;
-
-    /* reset document state (keep alloc/error callbacks) */
-    chm_close(ctx);
-
-    ctx->data = data;
-    ctx->data_len = len;
-
-    /* read and verify header */
-    sremain = _CHM_ITSF_V3_LEN;
-    sbufpos = sbuffer;
-    ok = fetch_bytes(ctx, sbuffer, (uint64_t)0, sremain) == sremain;
-    if (ok) {
-        ok = read_itsf_header(&sbufpos, &sremain, &itsfHeader);
-    }
-    if (!ok) {
-        chm_close(ctx);
-        return false;
-    }
-
-    /* stash important values from header */
-    ctx->dir_offset = itsfHeader.dir_offset;
-    ctx->dir_len = itsfHeader.dir_len;
-    ctx->data_offset = itsfHeader.data_offset;
-
-    /* now, read and verify the directory header chunk */
-    sremain = _CHM_ITSP_V1_LEN;
-    sbufpos = sbuffer;
-    ok = fetch_bytes(ctx, sbuffer, (uint64_t)itsfHeader.dir_offset, sremain) == sremain;
-    if (ok) {
-        ok = read_itsp_header(&sbufpos, &sremain, &itspHeader);
-    }
-    if (!ok) {
-        chm_close(ctx);
-        return false;
-    }
-    if (itsfHeader.dir_len < (uint64_t)itspHeader.header_len) {
-        chm_close(ctx);
-        return false;
-    }
-
-    /* grab essential information from ITSP header */
-    ctx->dir_offset += itspHeader.header_len;
-    ctx->dir_len -= itspHeader.header_len;
-    ctx->index_root = itspHeader.index_root;
-    ctx->index_head = itspHeader.index_head;
-    ctx->block_len = itspHeader.block_len;
-    if (dir_page_count(ctx) > CHM_MAX_DIR_PAGES) {
-        chm_close(ctx);
-        return false;
-    }
-    ctx->dir_page_count = dir_page_count(ctx);
-
-    /* if the index root is -1, this means we don't have any PMGI blocks.
-     * as a result, we must use the sole PMGL block as the index root
-     */
-    if (ctx->index_root <= -1) ctx->index_root = ctx->index_head;
-
-    /* collect all entries (always everything, no filtering) */
-    collect_entries(ctx);
-
-    /* By default, compression is enabled. */
-    ctx->compression_enabled = 1;
-
-/* Jed, Sun Jun 27: 'span' doesn't seem to be used anywhere?! */
-#if 0
-    /* fetch span */
-    if (CHM_RESOLVE_SUCCESS != chm_resolve_entry(ctx,
-                                                  _CHMU_SPANINFO,
-                                                  &uiSpan)                ||
-        uiSpan.is_compressed)
-    {
-        chm_close(ctx);
-        return NULL;
-    }
-
-    /* N.B.: we've already checked that uiSpan is in the uncompressed section,
-     *       so this should not require attempting to decompress, which may
-     *       rely on having a valid "span"
-     */
-    sremain = 8;
-    sbufpos = sbuffer;
-    if (read_entry_range(ctx, &uiSpan, sbuffer,
-                            0, sremain) != sremain                        ||
-        !read_u64(&sbufpos, &sremain, &ctx->span))
-    {
-        chm_close(ctx);
-        return NULL;
-    }
-#endif
-
-    /* prefetch most commonly needed entry infos */
-    if (CHM_RESOLVE_SUCCESS != chm_resolve_entry(ctx, _CHMU_RESET_TABLE, &ctx->rt_entry) ||
-        ctx->rt_entry.is_compressed ||
-        CHM_RESOLVE_SUCCESS != chm_resolve_entry(ctx, _CHMU_CONTENT, &ctx->cn_entry) ||
-        ctx->cn_entry.is_compressed ||
-        CHM_RESOLVE_SUCCESS != chm_resolve_entry(ctx, _CHMU_LZXC_CONTROLDATA, &uiLzxc) ||
-        uiLzxc.is_compressed) {
-        ctx->compression_enabled = 0;
-    }
-
-    /* read reset table info */
-    if (ctx->compression_enabled) {
-        sremain = _CHM_LZXC_RESETTABLE_V1_LEN;
-        sbufpos = sbuffer;
-        ok = read_entry_range(ctx, &ctx->rt_entry, sbuffer, 0, sremain) == sremain;
-        if (ok) {
-            ok = read_lzxc_reset_table(&sbufpos, &sremain, &ctx->reset_table);
-        }
-        if (!ok) {
-            ctx->compression_enabled = 0;
-        }
-    }
-
-    /* read control data */
-    if (ctx->compression_enabled) {
-        sremain = (unsigned int)uiLzxc.length;
-        if (uiLzxc.length > sizeof(sbuffer)) {
-            chm_close(ctx);
-            return false;
-        }
-
-        sbufpos = sbuffer;
-        if (read_entry_range(ctx, &uiLzxc, sbuffer, 0, sremain) != sremain ||
-            !read_lzxc_control_data(&sbufpos, &sremain, &ctlData)) {
-            ctx->compression_enabled = 0;
-        } else /* SumatraPDF: prevent division by zero */
-        {
-            ctx->window_size = ctlData.windowSize;
-            ctx->reset_interval = ctlData.resetInterval;
-
-/* Jed, Mon Jun 28: Experimentally, it appears that the reset block count */
-/*       must be multiplied by this formerly unknown ctrl data field in   */
-/*       order to decompress some files.                                  */
-#if 0
-        ctx->reset_blkcount = ctx->reset_interval /
-                    (ctx->window_size / 2);
-#else
-            ctx->reset_blkcount =
-                ctx->reset_interval / (ctx->window_size / 2) * ctlData.windowsPerReset;
-#endif
-        }
-    }
-
-    return true;
-}
-
-/* close an ITS archive (clears document state inside ctx, but keeps the ctx itself) */
-void chm_close(chm_ctx *ctx)
-{
-    if (!ctx) return;
-    if (ctx->lzx_state) LZXteardown(ctx->lzx_state);
-    ctx->lzx_state = NULL;
-
-    /* clear archive fields (keep alloc/free/error/user) */
-    if (ctx->entries) {
-        for (int i = 0; i < ctx->entry_count; i++) {
-            chm_free(ctx, ctx->entries[i].path);
-        }
-        chm_free(ctx, ctx->entries);
-        chm_free(ctx, ctx->entry_ptrs);
-        ctx->entries = NULL;
-        ctx->entry_ptrs = NULL;
-        ctx->entry_count = 0;
-    }
-
-    ctx->data = NULL;
-    ctx->data_len = 0;
-    /* zero the rest for safety */
-    ctx->dir_offset = 0;
-    ctx->dir_len = 0;
-    ctx->data_offset = 0;
-    ctx->index_root = 0;
-    ctx->index_head = 0;
-    ctx->block_len = 0;
-    ctx->span = 0;
-    memset(&ctx->rt_entry, 0, sizeof(ctx->rt_entry));
-    memset(&ctx->cn_entry, 0, sizeof(ctx->cn_entry));
-    memset(&ctx->reset_table, 0, sizeof(ctx->reset_table));
-    ctx->compression_enabled = 0;
-    ctx->window_size = 0;
-    ctx->reset_interval = 0;
-    ctx->reset_blkcount = 0;
-    ctx->lzx_last_block = 0;
-    ctx->dir_page_count = 0;
-    ctx->dir_pages_seen = 0;
-    memset(ctx->dir_seen_bitmap, 0, sizeof(ctx->dir_seen_bitmap));
-}
-
 /* find an exact entry in PMGL; return NULL if we fail.
    Compares directly without using fixed-size buffer. */
 static uint8_t* find_in_PMGL(uint8_t* page_buf, uint32_t block_len, const char* objPath) {
@@ -938,16 +727,15 @@ static int32_t find_in_PMGI(uint8_t* page_buf, uint32_t block_len, const char* o
 /* enumeration walk removed */
 
 /* resolve a particular entry from the archive */
-static int chm_resolve_entry(chm_ctx *ctx, const char* objPath, struct chm_entry* entry) {
+static bool chm_resolve_entry(chm_ctx *ctx, const char* objPath, struct chm_entry* entry) {
     /*
      * XXX: implement caching scheme for dir pages
      */
 
     struct chmDirSession session;
     int32_t curPage;
-    int result = CHM_RESOLVE_FAILURE;
 
-    if (!dir_session_begin(ctx, &session)) return CHM_RESOLVE_FAILURE;
+    if (!dir_session_begin(ctx, &session)) return false;
 
     curPage = ctx->index_root;
     while (curPage != -1) {
@@ -962,8 +750,8 @@ static int chm_resolve_entry(chm_ctx *ctx, const char* objPath, struct chm_entry
             pEntry = find_in_PMGL(session.page_buf, ctx->block_len, objPath);
             if (pEntry == NULL) goto cleanup;
             if (!parse_PMGL_entry(ctx, &pEntry, session.page_buf_end, entry)) goto cleanup;
-            result = CHM_RESOLVE_SUCCESS;
-            goto cleanup;
+            dir_session_end(&session);
+            return true;
         } else if (memcmp(session.page_buf, _chm_pmgi_marker, 4) == 0) {
             new_page = find_in_PMGI(session.page_buf, ctx->block_len, objPath);
             curPage = new_page;
@@ -974,12 +762,8 @@ static int chm_resolve_entry(chm_ctx *ctx, const char* objPath, struct chm_entry
 
 cleanup:
     dir_session_end(&session);
-    return result;
+    return false;
 }
-
-/*
- * utility methods for dealing with compressed data
- */
 
 /* get the bounds of a compressed block.  return 0 on failure */
 static int get_cmpblock_bounds(chm_ctx *ctx, uint64_t block, uint64_t* start, int64_t* len) {
@@ -1209,6 +993,211 @@ static int64_t read_entry_range(chm_ctx *ctx, struct chm_entry* entry, uint8_t* 
         return total;
     }
 }
+
+bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
+{
+    uint8_t sbuffer[256];
+    unsigned int sremain;
+    uint8_t *sbufpos;
+    struct chmItsfHeader itsfHeader = {0};
+    struct chmItspHeader itspHeader = {0};
+#if 0
+    struct chm_entry uiSpan;
+#endif
+    struct chm_entry uiLzxc = {0};
+    struct chmLzxcControlData ctlData;
+    int ok;
+
+    if (!ctx) return false;
+
+    /* reset document state (keep alloc/error callbacks) */
+    chm_close(ctx);
+
+    ctx->data = data;
+    ctx->data_len = len;
+
+    /* read and verify header */
+    sremain = _CHM_ITSF_V3_LEN;
+    sbufpos = sbuffer;
+    ok = fetch_bytes(ctx, sbuffer, (uint64_t)0, sremain) == sremain;
+    if (ok) {
+        ok = read_itsf_header(&sbufpos, &sremain, &itsfHeader);
+    }
+    if (!ok) {
+        chm_close(ctx);
+        return false;
+    }
+
+    /* stash important values from header */
+    ctx->dir_offset = itsfHeader.dir_offset;
+    ctx->dir_len = itsfHeader.dir_len;
+    ctx->data_offset = itsfHeader.data_offset;
+
+    /* now, read and verify the directory header chunk */
+    sremain = _CHM_ITSP_V1_LEN;
+    sbufpos = sbuffer;
+    ok = fetch_bytes(ctx, sbuffer, (uint64_t)itsfHeader.dir_offset, sremain) == sremain;
+    if (ok) {
+        ok = read_itsp_header(&sbufpos, &sremain, &itspHeader);
+    }
+    if (!ok) {
+        chm_close(ctx);
+        return false;
+    }
+    if (itsfHeader.dir_len < (uint64_t)itspHeader.header_len) {
+        chm_close(ctx);
+        return false;
+    }
+
+    /* grab essential information from ITSP header */
+    ctx->dir_offset += itspHeader.header_len;
+    ctx->dir_len -= itspHeader.header_len;
+    ctx->index_root = itspHeader.index_root;
+    ctx->index_head = itspHeader.index_head;
+    ctx->block_len = itspHeader.block_len;
+    if (dir_page_count(ctx) > CHM_MAX_DIR_PAGES) {
+        chm_close(ctx);
+        return false;
+    }
+    ctx->dir_page_count = dir_page_count(ctx);
+
+    /* if the index root is -1, this means we don't have any PMGI blocks.
+     * as a result, we must use the sole PMGL block as the index root
+     */
+    if (ctx->index_root <= -1) ctx->index_root = ctx->index_head;
+
+    /* collect all entries (always everything, no filtering) */
+    collect_entries(ctx);
+
+    /* By default, compression is enabled. */
+    ctx->compression_enabled = 1;
+
+/* Jed, Sun Jun 27: 'span' doesn't seem to be used anywhere?! */
+#if 0
+    /* fetch span */
+    if (!chm_resolve_entry(ctx,
+                           _CHMU_SPANINFO,
+                           &uiSpan) ||
+        uiSpan.is_compressed)
+    {
+        chm_close(ctx);
+        return false;
+    }
+
+    /* N.B.: we've already checked that uiSpan is in the uncompressed section,
+     *       so this should not require attempting to decompress, which may
+     *       rely on having a valid "span"
+     */
+    sremain = 8;
+    sbufpos = sbuffer;
+    if (read_entry_range(ctx, &uiSpan, sbuffer,
+                            0, sremain) != sremain                        ||
+        !read_u64(&sbufpos, &sremain, &ctx->span))
+    {
+        chm_close(ctx);
+        return false;
+    }
+#endif
+
+    /* prefetch most commonly needed entry infos */
+    if (!chm_resolve_entry(ctx, _CHMU_RESET_TABLE, &ctx->rt_entry) ||
+        ctx->rt_entry.is_compressed ||
+        !chm_resolve_entry(ctx, _CHMU_CONTENT, &ctx->cn_entry) ||
+        ctx->cn_entry.is_compressed ||
+        !chm_resolve_entry(ctx, _CHMU_LZXC_CONTROLDATA, &uiLzxc) ||
+        uiLzxc.is_compressed) {
+        ctx->compression_enabled = 0;
+    }
+
+    /* read reset table info */
+    if (ctx->compression_enabled) {
+        sremain = _CHM_LZXC_RESETTABLE_V1_LEN;
+        sbufpos = sbuffer;
+        ok = read_entry_range(ctx, &ctx->rt_entry, sbuffer, 0, sremain) == sremain;
+        if (ok) {
+            ok = read_lzxc_reset_table(&sbufpos, &sremain, &ctx->reset_table);
+        }
+        if (!ok) {
+            ctx->compression_enabled = 0;
+        }
+    }
+
+    /* read control data */
+    if (ctx->compression_enabled) {
+        sremain = (unsigned int)uiLzxc.length;
+        if (uiLzxc.length > sizeof(sbuffer)) {
+            chm_close(ctx);
+            return false;
+        }
+
+        sbufpos = sbuffer;
+        if (read_entry_range(ctx, &uiLzxc, sbuffer, 0, sremain) != sremain ||
+            !read_lzxc_control_data(&sbufpos, &sremain, &ctlData)) {
+            ctx->compression_enabled = 0;
+        } else /* SumatraPDF: prevent division by zero */
+        {
+            ctx->window_size = ctlData.windowSize;
+            ctx->reset_interval = ctlData.resetInterval;
+
+/* Jed, Mon Jun 28: Experimentally, it appears that the reset block count */
+/*       must be multiplied by this formerly unknown ctrl data field in   */
+/*       order to decompress some files.                                  */
+#if 0
+        ctx->reset_blkcount = ctx->reset_interval /
+                    (ctx->window_size / 2);
+#else
+            ctx->reset_blkcount =
+                ctx->reset_interval / (ctx->window_size / 2) * ctlData.windowsPerReset;
+#endif
+        }
+    }
+
+    return true;
+}
+
+/* close an ITS archive (clears document state inside ctx, but keeps the ctx itself) */
+void chm_close(chm_ctx *ctx)
+{
+    if (!ctx) return;
+    if (ctx->lzx_state) LZXteardown(ctx->lzx_state);
+    ctx->lzx_state = NULL;
+
+    /* clear archive fields (keep alloc/free/error/user) */
+    if (ctx->entries) {
+        for (int i = 0; i < ctx->entry_count; i++) {
+            chm_free(ctx, ctx->entries[i].path);
+        }
+        chm_free(ctx, ctx->entries);
+        chm_free(ctx, ctx->entry_ptrs);
+        ctx->entries = NULL;
+        ctx->entry_ptrs = NULL;
+        ctx->entry_count = 0;
+    }
+
+    ctx->data = NULL;
+    ctx->data_len = 0;
+    /* zero the rest for safety */
+    ctx->dir_offset = 0;
+    ctx->dir_len = 0;
+    ctx->data_offset = 0;
+    ctx->index_root = 0;
+    ctx->index_head = 0;
+    ctx->block_len = 0;
+    ctx->span = 0;
+    memset(&ctx->rt_entry, 0, sizeof(ctx->rt_entry));
+    memset(&ctx->cn_entry, 0, sizeof(ctx->cn_entry));
+    memset(&ctx->reset_table, 0, sizeof(ctx->reset_table));
+    ctx->compression_enabled = 0;
+    ctx->window_size = 0;
+    ctx->reset_interval = 0;
+    ctx->reset_blkcount = 0;
+    ctx->lzx_last_block = 0;
+    ctx->dir_page_count = 0;
+    ctx->dir_pages_seen = 0;
+    memset(ctx->dir_seen_bitmap, 0, sizeof(ctx->dir_seen_bitmap));
+}
+
+
 
 /* read an entire entry from the archive */
 int64_t chm_read_entry(chm_ctx *ctx, struct chm_entry *entry, uint8_t *buf) {
