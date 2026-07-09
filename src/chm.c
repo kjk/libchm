@@ -289,7 +289,7 @@ static int add_u64(uint64_t a, uint64_t b, uint64_t* result) {
     return 1;
 }
 
-static int get_object_offset(chm_ctx *ctx, const struct chm_entry* entry, uint64_t addr, int64_t len,
+static int get_entry_offset(chm_ctx *ctx, const struct chm_entry* entry, uint64_t addr, int64_t len,
                                   uint64_t* offset) {
     uint64_t temp;
 
@@ -462,12 +462,12 @@ static int parse_PMGL_entry(chm_ctx *ctx, uint8_t** pEntry, uint8_t* end, struct
 }
 
 /* forward decl for retrieve helper (defined after open logic) */
-static int64_t retrieve_object_range(chm_ctx *ctx, struct chm_entry* entry, uint8_t* buf, uint64_t addr, int64_t len);
+static int64_t read_entry_range(chm_ctx *ctx, struct chm_entry* entry, uint8_t* buf, uint64_t addr, int64_t len);
 
 /* internal resolve (not part of public API) */
 #define CHM_RESOLVE_SUCCESS (0)
 #define CHM_RESOLVE_FAILURE (1)
-static int chm_resolve_object(chm_ctx *ctx, const char* objPath, struct chm_entry* entry);
+static int chm_resolve_entry(chm_ctx *ctx, const char* objPath, struct chm_entry* entry);
 
 /* collect every entry in the archive into ctx->entries / ctx->entry_ptrs */
 static int collect_entries(chm_ctx *ctx) {
@@ -666,7 +666,7 @@ bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
 /* Jed, Sun Jun 27: 'span' doesn't seem to be used anywhere?! */
 #if 0
     /* fetch span */
-    if (CHM_RESOLVE_SUCCESS != chm_resolve_object(ctx,
+    if (CHM_RESOLVE_SUCCESS != chm_resolve_entry(ctx,
                                                   _CHMU_SPANINFO,
                                                   &uiSpan)                ||
         uiSpan.is_compressed)
@@ -681,7 +681,7 @@ bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
      */
     sremain = 8;
     sbufpos = sbuffer;
-    if (retrieve_object_range(ctx, &uiSpan, sbuffer,
+    if (read_entry_range(ctx, &uiSpan, sbuffer,
                             0, sremain) != sremain                        ||
         !read_u64(&sbufpos, &sremain, &ctx->span))
     {
@@ -691,11 +691,11 @@ bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
 #endif
 
     /* prefetch most commonly needed entry infos */
-    if (CHM_RESOLVE_SUCCESS != chm_resolve_object(ctx, _CHMU_RESET_TABLE, &ctx->rt_entry) ||
+    if (CHM_RESOLVE_SUCCESS != chm_resolve_entry(ctx, _CHMU_RESET_TABLE, &ctx->rt_entry) ||
         ctx->rt_entry.is_compressed ||
-        CHM_RESOLVE_SUCCESS != chm_resolve_object(ctx, _CHMU_CONTENT, &ctx->cn_entry) ||
+        CHM_RESOLVE_SUCCESS != chm_resolve_entry(ctx, _CHMU_CONTENT, &ctx->cn_entry) ||
         ctx->cn_entry.is_compressed ||
-        CHM_RESOLVE_SUCCESS != chm_resolve_object(ctx, _CHMU_LZXC_CONTROLDATA, &uiLzxc) ||
+        CHM_RESOLVE_SUCCESS != chm_resolve_entry(ctx, _CHMU_LZXC_CONTROLDATA, &uiLzxc) ||
         uiLzxc.is_compressed) {
         ctx->compression_enabled = 0;
     }
@@ -704,7 +704,7 @@ bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
     if (ctx->compression_enabled) {
         sremain = _CHM_LZXC_RESETTABLE_V1_LEN;
         sbufpos = sbuffer;
-        ok = retrieve_object_range(ctx, &ctx->rt_entry, sbuffer, 0, sremain) == sremain;
+        ok = read_entry_range(ctx, &ctx->rt_entry, sbuffer, 0, sremain) == sremain;
         if (ok) {
             ok = read_lzxc_reset_table(&sbufpos, &sremain, &ctx->reset_table);
         }
@@ -722,7 +722,7 @@ bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len)
         }
 
         sbufpos = sbuffer;
-        if (retrieve_object_range(ctx, &uiLzxc, sbuffer, 0, sremain) != sremain ||
+        if (read_entry_range(ctx, &uiLzxc, sbuffer, 0, sremain) != sremain ||
             !read_lzxc_control_data(&sbufpos, &sremain, &ctlData)) {
             ctx->compression_enabled = 0;
         } else /* SumatraPDF: prevent division by zero */
@@ -938,8 +938,8 @@ static int32_t find_in_PMGI(uint8_t* page_buf, uint32_t block_len, const char* o
 
 /* enumeration walk removed */
 
-/* resolve a particular object from the archive */
-static int chm_resolve_object(chm_ctx *ctx, const char* objPath, struct chm_entry* entry) {
+/* resolve a particular entry from the archive */
+static int chm_resolve_entry(chm_ctx *ctx, const char* objPath, struct chm_entry* entry) {
     /*
      * XXX: implement caching scheme for dir pages
      */
@@ -1000,7 +1000,7 @@ static int get_cmpblock_bounds(chm_ctx *ctx, uint64_t block, uint64_t* start, in
         dummy = buffer;
         remain = 8;
         if (!add_u64((uint64_t)ctx->reset_table.table_offset, block_entry_offset, &table_addr)) return 0;
-        if (!get_object_offset(ctx, &ctx->rt_entry, table_addr, remain, &table_offset) ||
+        if (!get_entry_offset(ctx, &ctx->rt_entry, table_addr, remain, &table_offset) ||
             fetch_bytes(ctx, buffer, table_offset, remain) != remain || !read_u64(&dummy, &remain, start))
             return 0;
 
@@ -1008,7 +1008,7 @@ static int get_cmpblock_bounds(chm_ctx *ctx, uint64_t block, uint64_t* start, in
         dummy = buffer;
         remain = 8;
         if (!add_u64(table_addr, 8, &table_addr)) return 0;
-        if (!get_object_offset(ctx, &ctx->rt_entry, table_addr, remain, &table_offset) ||
+        if (!get_entry_offset(ctx, &ctx->rt_entry, table_addr, remain, &table_offset) ||
             fetch_bytes(ctx, buffer, table_offset, remain) != remain || !read_i64(&dummy, &remain, len))
             return 0;
     }
@@ -1019,7 +1019,7 @@ static int get_cmpblock_bounds(chm_ctx *ctx, uint64_t block, uint64_t* start, in
         dummy = buffer;
         remain = 8;
         if (!add_u64((uint64_t)ctx->reset_table.table_offset, block_entry_offset, &table_addr)) return 0;
-        if (!get_object_offset(ctx, &ctx->rt_entry, table_addr, remain, &table_offset) ||
+        if (!get_entry_offset(ctx, &ctx->rt_entry, table_addr, remain, &table_offset) ||
             fetch_bytes(ctx, buffer, table_offset, remain) != remain || !read_u64(&dummy, &remain, start))
             return 0;
 
@@ -1031,7 +1031,7 @@ static int get_cmpblock_bounds(chm_ctx *ctx, uint64_t block, uint64_t* start, in
         return 0; // Invalid block bounds
     }
     *len -= *start;
-    if (!get_object_offset(ctx, &ctx->cn_entry, *start, *len, &abs_start)) return 0;
+    if (!get_entry_offset(ctx, &ctx->cn_entry, *start, *len, &abs_start)) return 0;
     *start = abs_start;
 
     return 1;
@@ -1179,8 +1179,8 @@ static int64_t decompress_region(chm_ctx *ctx, uint8_t* buf, uint64_t start, int
     return nLen;
 }
 
-/* internal: retrieve a (possibly partial) range of an object */
-static int64_t retrieve_object_range(chm_ctx *ctx, struct chm_entry* entry, uint8_t* buf, uint64_t addr, int64_t len) {
+/* internal: read a (possibly partial) range of an entry */
+static int64_t read_entry_range(chm_ctx *ctx, struct chm_entry* entry, uint8_t* buf, uint64_t addr, int64_t len) {
     uint64_t offset;
 
     /* must be valid file handle */
@@ -1196,7 +1196,7 @@ static int64_t retrieve_object_range(chm_ctx *ctx, struct chm_entry* entry, uint
     /* if the file is uncompressed, it's simple */
     if (!entry->is_compressed) {
         /* read data */
-        if (!get_object_offset(ctx, entry, addr, len, &offset)) return (int64_t)0;
+        if (!get_entry_offset(ctx, entry, addr, len, &offset)) return (int64_t)0;
         return fetch_bytes(ctx, buf, offset, len);
     }
 
@@ -1229,10 +1229,10 @@ static int64_t retrieve_object_range(chm_ctx *ctx, struct chm_entry* entry, uint
     }
 }
 
-/* retrieve an entire object from the archive */
+/* read an entire entry from the archive */
 int64_t chm_read_entry(chm_ctx *ctx, struct chm_entry *entry, uint8_t *buf) {
     if (!entry) return 0;
-    return retrieve_object_range(ctx, entry, buf, 0, entry->length);
+    return read_entry_range(ctx, entry, buf, 0, entry->length);
 }
 
 /* enumeration API removed; entries are collected into ctx->entries at open time */
