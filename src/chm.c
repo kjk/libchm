@@ -538,9 +538,14 @@ static int parse_PMGL_entry(chm_ctx *ctx, uint8_t** pEntry, uint8_t* end, struct
         return 0;
     }
 
-    /* parse info */
+    /* parse info: the "space" field is the content-section index (0 =
+       uncompressed, 1 = MSCompressed). Keep the raw value: an entry is only
+       reported as compressed when space == CHM_COMPRESSED exactly, but the
+       retrieve path treats any non-zero section as compressed (matching
+       CHMLib, which diverge for corrupt files whose space is neither 0 nor 1). */
     if (!parse_cword(pEntry, end, &strLen)) return 0;
-    entry->is_compressed = (bool)strLen;
+    entry->space = (uint32_t)strLen;
+    entry->is_compressed = (strLen == CHM_COMPRESSED);
     if (!parse_cword(pEntry, end, &entry->start)) return 0;
     if (!parse_cword(pEntry, end, &entry->length)) return 0;
     return 1;
@@ -1045,8 +1050,11 @@ static int64_t read_entry_range(chm_ctx *ctx, struct chm_entry* entry, uint8_t* 
     /* clip length */
     if ((uint64_t)len > entry->length - addr) len = (int64_t)(entry->length - addr);
 
-    /* if the file is uncompressed, it's simple */
-    if (!entry->is_compressed) {
+    /* if the file is uncompressed, it's simple. Note: this tests the section
+       index, not is_compressed -- a corrupt space that is neither 0 nor 1 is
+       reported as uncompressed but still retrieved via the compressed path,
+       matching CHMLib. */
+    if (entry->space == CHM_UNCOMPRESSED) {
         /* read data */
         if (!get_entry_offset(ctx, entry, addr, len, &offset)) return (int64_t)0;
         return fetch_bytes(ctx, buf, offset, len);

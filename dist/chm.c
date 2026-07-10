@@ -25,9 +25,13 @@ void chm_ctx_free(chm_ctx *ctx);
 bool chm_open(chm_ctx *ctx, const uint8_t *data, size_t len);
 void chm_close(chm_ctx *ctx);
 
+#define CHM_UNCOMPRESSED 0
+#define CHM_COMPRESSED 1
+
 struct chm_entry {
     uint64_t start;
     uint64_t length;
+    uint32_t space;
     bool is_compressed;
     bool is_dir;
     bool is_file;
@@ -1313,7 +1317,8 @@ static int parse_PMGL_entry(chm_ctx *ctx, uint8_t** pEntry, uint8_t* end, struct
     }
 
     if (!parse_cword(pEntry, end, &strLen)) return 0;
-    entry->is_compressed = (bool)strLen;
+    entry->space = (uint32_t)strLen;
+    entry->is_compressed = (strLen == CHM_COMPRESSED);
     if (!parse_cword(pEntry, end, &entry->start)) return 0;
     if (!parse_cword(pEntry, end, &entry->length)) return 0;
     return 1;
@@ -1746,7 +1751,7 @@ static int64_t read_entry_range(chm_ctx *ctx, struct chm_entry* entry, uint8_t* 
 
     if ((uint64_t)len > entry->length - addr) len = (int64_t)(entry->length - addr);
 
-    if (!entry->is_compressed) {
+    if (entry->space == CHM_UNCOMPRESSED) {
 
         if (!get_entry_offset(ctx, entry, addr, len, &offset)) return (int64_t)0;
         return fetch_bytes(ctx, buf, offset, len);

@@ -50,13 +50,18 @@ void chm_close(chm_ctx *ctx);
 
 /* ----- entries (files/directories inside the archive) ----- */
 
+/* content-section index stored in a directory entry's "space" field */
+#define CHM_UNCOMPRESSED 0 /* the uncompressed section */
+#define CHM_COMPRESSED 1   /* the MSCompressed (LZX) section */
+
 /* chm_entry describes one entry inside the CHM.
    The 'path' string is allocated and owned by the chm_ctx; it is valid
    until chm_close and must not be freed by the caller. */
 struct chm_entry {
     uint64_t start;
     uint64_t length;
-    bool is_compressed;
+    uint32_t space;        /* raw content-section index (see CHM_* above) */
+    bool is_compressed;    /* space == CHM_COMPRESSED (i.e. exactly 1) */
     bool is_dir;
     bool is_file;
     bool is_normal;
