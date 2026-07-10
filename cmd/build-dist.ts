@@ -102,7 +102,8 @@ export async function buildDist() {
 }
 
 if (import.meta.main) {
-  await buildDist();
+  // buildWasm() calls ensureDist() -> buildDist() first, so don't build dist
+  // twice; this regenerates dist/ (always clean) and then the wasm drop-in.
   const { buildWasm } = await import("./build-wasm");
   await buildWasm();
 }
