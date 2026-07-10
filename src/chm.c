@@ -976,7 +976,16 @@ static int64_t decompress_region(chm_ctx *ctx, uint8_t* buf, uint64_t start, int
 
     /* data request not satisfied, so... start up the decompressor machine */
     if (!ctx->lzx_state) {
-        int window_size = ffs(ctx->window_size) - 1;
+        /* window_size is a power of two; ffs(x)-1 is its base-2 log. Compute
+           it portably (ffs is POSIX-only, absent on MSVC/Windows). */
+        int window_size = 0;
+        {
+            uint32_t w = ctx->window_size;
+            while (w > 1) {
+                w >>= 1;
+                window_size++;
+            }
+        }
         ctx->lzx_last_block = -1;
         ctx->lzx_state = LZXinit(window_size);
     }

@@ -1692,7 +1692,15 @@ static int64_t decompress_region(chm_ctx *ctx, uint8_t* buf, uint64_t start, int
     }
 
     if (!ctx->lzx_state) {
-        int window_size = ffs(ctx->window_size) - 1;
+
+        int window_size = 0;
+        {
+            uint32_t w = ctx->window_size;
+            while (w > 1) {
+                w >>= 1;
+                window_size++;
+            }
+        }
         ctx->lzx_last_block = -1;
         ctx->lzx_state = LZXinit(window_size);
     }

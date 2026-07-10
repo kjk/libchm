@@ -374,12 +374,20 @@ export async function buildDumpers(): Promise<Dumpers> {
   // Always recompile from scratch. mtime-based incremental builds silently
   // served a stale our-dump (built before a source fix), which showed up as
   // phantom decompression failures, so the C dumpers are always rebuilt clean.
-  await $`clang -O2 -Wall -Werror -I${join(ROOT, "src")} ${join(ROOT, "src", "lzx.c")} ${join(ROOT, "src", "chm.c")} ${OUR_DUMP_C} -o ${ours}`.cwd(ROOT);
+  await $`clang -O2 -Wall -Werror -D_CRT_SECURE_NO_WARNINGS -I${join(ROOT, "src")} ${join(ROOT, "src", "lzx.c")} ${join(ROOT, "src", "chm.c")} ${OUR_DUMP_C} -o ${ours}`.cwd(ROOT);
   // The sumatra CHMLib fork is written for a Windows/prefix-header build: it
-  // relies on <limits.h> being pulled in implicitly and calls the MSVC-only
-  // _stricmp in one spot. Shim both via flags so the vendored copy stays an
-  // exact mirror of upstream.
-  await $`clang -O2 -Wno-macro-redefined -include limits.h -D_stricmp=strcasecmp -I${CHMLIB_DIR} ${join(CHMLIB_DIR, "lzx.c")} ${join(CHMLIB_DIR, "chm_lib.c")} ${CHMLIB_DUMP_C} -o ${chmlib}`.cwd(ROOT);
+  // relies on <limits.h> being pulled in implicitly and gates its Windows
+  // shims (a local ffs, strcasecmp/strncasecmp -> stricmp/strnicmp) behind
+  // `#ifdef WIN32`. Plain clang targeting MSVC defines _WIN32 but not WIN32,
+  // so on Windows we define WIN32 ourselves to activate those shims (and
+  // silence the UCRT deprecation warnings). On macOS/Linux, WIN32 is absent
+  // and the vendored code calls the MSVC-only _stricmp in one spot, so map it
+  // to the POSIX name there. Either way the vendored copy stays an exact
+  // mirror of upstream.
+  const chmlibShims = isWindows
+    ? ["-DWIN32", "-D_CRT_SECURE_NO_WARNINGS", "-D_CRT_NONSTDC_NO_WARNINGS"]
+    : ["-D_stricmp=strcasecmp"];
+  await $`clang -O2 -Wno-macro-redefined -include limits.h ${chmlibShims} -I${CHMLIB_DIR} ${join(CHMLIB_DIR, "lzx.c")} ${join(CHMLIB_DIR, "chm_lib.c")} ${CHMLIB_DUMP_C} -o ${chmlib}`.cwd(ROOT);
 
   return { ours, chmlib };
 }
