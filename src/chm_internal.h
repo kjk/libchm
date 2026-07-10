@@ -95,6 +95,7 @@ int LZX_test_pretree_make_decode_table(void); /* test helper */
 /* ===================================================================== */
 
 /* tuning */
+#define CHM_MAX_BLOCKS_CACHED 5 /* recently-decompressed LZX blocks kept (matches CHMLib) */
 #define CHM_MAX_DIR_PAGES 65536
 #define CHM_DIR_SEEN_BITMAP_BITS CHM_MAX_DIR_PAGES
 #define CHM_DIR_SEEN_BITMAP_WORDS (CHM_DIR_SEEN_BITMAP_BITS / 32)
@@ -236,12 +237,17 @@ struct chm_ctx {
     struct LZXstate *lzx_state;
     int lzx_last_block;
 
-    /* cache of the most-recently decompressed block. LZX decoding is stateful,
-       so a block cannot be re-decompressed once the decoder has advanced past
-       it; when several entries share one compressed block, later reads must be
-       served from this cache rather than by re-running the decompressor. */
-    uint8_t *dblock_buf;   /* holds block_len decompressed bytes, or NULL */
-    int64_t dblock_idx;    /* which block dblock_buf holds, -1 if none */
+    /* cache of recently decompressed blocks, indexed by (block %
+       cache_num_blocks). LZX decoding is stateful, so a block cannot be
+       re-decompressed once the decoder has advanced past it; retaining
+       several blocks lets reads that revisit a block, or share one with an
+       earlier entry, be served without re-running the decompressor. It also
+       preserves CHMLib's behavior of exposing a block's (partially) decoded
+       buffer even when a later part of that block fails to decode. Each
+       cache_blocks[i] holds block_len bytes (allocated lazily) or is NULL. */
+    uint8_t *cache_blocks[CHM_MAX_BLOCKS_CACHED];
+    int64_t cache_block_indices[CHM_MAX_BLOCKS_CACHED];
+    int cache_num_blocks;
 
     /* dir visit state */
     uint64_t dir_page_count;

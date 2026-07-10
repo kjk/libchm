@@ -125,6 +125,7 @@ int LZXreset(struct LZXstate *pState);
 int LZXdecompress(struct LZXstate *pState, uint8_t *inpos, uint8_t *outpos, int inlen, int outlen);
 int LZX_test_pretree_make_decode_table(void);
 
+#define CHM_MAX_BLOCKS_CACHED 5
 #define CHM_MAX_DIR_PAGES 65536
 #define CHM_DIR_SEEN_BITMAP_BITS CHM_MAX_DIR_PAGES
 #define CHM_DIR_SEEN_BITMAP_WORDS (CHM_DIR_SEEN_BITMAP_BITS / 32)
@@ -256,8 +257,9 @@ struct chm_ctx {
     struct LZXstate *lzx_state;
     int lzx_last_block;
 
-    uint8_t *dblock_buf;
-    int64_t dblock_idx;
+    uint8_t *cache_blocks[CHM_MAX_BLOCKS_CACHED];
+    int64_t cache_block_indices[CHM_MAX_BLOCKS_CACHED];
+    int cache_num_blocks;
 
     uint64_t dir_page_count;
     uint64_t dir_pages_seen;
@@ -1599,6 +1601,7 @@ static int64_t decompress_block(chm_ctx *ctx, uint64_t block, uint8_t** ubuffer)
     uint64_t cbufferLen;
     uint64_t cmpStart;
     int64_t cmpLen;
+    int indexSlot;
     uint8_t* lbuffer;
     uint32_t blockAlign = (uint32_t)(block % ctx->reset_blkcount);
     uint32_t i;
@@ -1620,23 +1623,23 @@ static int64_t decompress_block(chm_ctx *ctx, uint64_t block, uint8_t** ubuffer)
                     LZXreset(ctx->lzx_state);
                 }
 
-                lbuffer = (uint8_t *)chm_alloc(ctx, (size_t)ctx->reset_table.block_len);
-                if (!lbuffer) {
+                indexSlot = (int)(curBlockIdx % ctx->cache_num_blocks);
+                if (!ctx->cache_blocks[indexSlot])
+                    ctx->cache_blocks[indexSlot] = (uint8_t *)chm_alloc(ctx, (size_t)ctx->reset_table.block_len);
+                if (!ctx->cache_blocks[indexSlot]) {
                     chm_free(ctx, cbuffer);
                     return -1;
                 }
+                ctx->cache_block_indices[indexSlot] = curBlockIdx;
+                lbuffer = ctx->cache_blocks[indexSlot];
 
                 if (!get_cmpblock_bounds(ctx, curBlockIdx, &cmpStart, &cmpLen) || cmpLen < 0 ||
                     cmpLen > cbufferLen || fetch_bytes(ctx, cbuffer, cmpStart, cmpLen) != cmpLen ||
                     LZXdecompress(ctx->lzx_state, cbuffer, lbuffer, (int)cmpLen, (int)ctx->reset_table.block_len) != DECR_OK) {
-
-                    ctx->lzx_last_block = -1;
-                    chm_free(ctx, lbuffer);
                     chm_free(ctx, cbuffer);
                     return (int64_t)0;
                 }
 
-                chm_free(ctx, lbuffer);
                 ctx->lzx_last_block = (int)curBlockIdx;
             }
         }
@@ -1646,28 +1649,29 @@ static int64_t decompress_block(chm_ctx *ctx, uint64_t block, uint8_t** ubuffer)
         }
     }
 
-    if (!ctx->dblock_buf) {
-        ctx->dblock_buf = (uint8_t *)chm_alloc(ctx, (size_t)ctx->reset_table.block_len);
-        if (!ctx->dblock_buf) {
-            chm_free(ctx, cbuffer);
-            return -1;
-        }
+    if (ctx->cache_num_blocks == 0) {
+        chm_free(ctx, cbuffer);
+        return -1;
     }
-    lbuffer = ctx->dblock_buf;
-    ctx->dblock_idx = -1;
+
+    indexSlot = (int)(block % ctx->cache_num_blocks);
+    if (!ctx->cache_blocks[indexSlot])
+        ctx->cache_blocks[indexSlot] = (uint8_t *)chm_alloc(ctx, (size_t)ctx->reset_table.block_len);
+    if (!ctx->cache_blocks[indexSlot]) {
+        chm_free(ctx, cbuffer);
+        return -1;
+    }
+    ctx->cache_block_indices[indexSlot] = block;
+    lbuffer = ctx->cache_blocks[indexSlot];
     *ubuffer = lbuffer;
 
     ok = get_cmpblock_bounds(ctx, block, &cmpStart, &cmpLen);
     if (!ok || cmpLen > cbufferLen || fetch_bytes(ctx, cbuffer, cmpStart, cmpLen) != cmpLen ||
         LZXdecompress(ctx->lzx_state, cbuffer, lbuffer, (int)cmpLen, (int)ctx->reset_table.block_len) != DECR_OK) {
-
-        ctx->lzx_last_block = -1;
         chm_free(ctx, cbuffer);
-        *ubuffer = NULL;
         return (int64_t)0;
     }
     ctx->lzx_last_block = (int)block;
-    ctx->dblock_idx = (int64_t)block;
 
     chm_free(ctx, cbuffer);
     return ctx->reset_table.block_len;
@@ -1677,7 +1681,7 @@ static int64_t decompress_region(chm_ctx *ctx, uint8_t* buf, uint64_t start, int
     uint64_t nBlock, nOffset;
     uint64_t nLen;
     uint64_t gotLen;
-    uint8_t* ubuffer;
+    uint8_t* ubuffer = NULL;
 
     if (len <= 0) return (int64_t)0;
 
@@ -1690,9 +1694,12 @@ static int64_t decompress_region(chm_ctx *ctx, uint8_t* buf, uint64_t start, int
     nLen = len;
     if (nLen > (ctx->reset_table.block_len - nOffset)) nLen = ctx->reset_table.block_len - nOffset;
 
-    if (ctx->dblock_buf && ctx->dblock_idx == (int64_t)nBlock) {
-        memcpy(buf, ctx->dblock_buf + nOffset, (unsigned int)nLen);
-        return nLen;
+    if (ctx->cache_num_blocks > 0) {
+        if (ctx->cache_block_indices[nBlock % ctx->cache_num_blocks] == (int64_t)nBlock &&
+            ctx->cache_blocks[nBlock % ctx->cache_num_blocks] != NULL) {
+            memcpy(buf, ctx->cache_blocks[nBlock % ctx->cache_num_blocks] + nOffset, (unsigned int)nLen);
+            return nLen;
+        }
     }
 
     if (!ctx->lzx_state) {
@@ -1909,9 +1916,12 @@ void chm_close(chm_ctx *ctx)
     if (ctx->lzx_state) LZXteardown(ctx->lzx_state);
     ctx->lzx_state = NULL;
 
-    chm_free(ctx, ctx->dblock_buf);
-    ctx->dblock_buf = NULL;
-    ctx->dblock_idx = -1;
+    for (int i = 0; i < CHM_MAX_BLOCKS_CACHED; i++) {
+        chm_free(ctx, ctx->cache_blocks[i]);
+        ctx->cache_blocks[i] = NULL;
+        ctx->cache_block_indices[i] = -1;
+    }
+    ctx->cache_num_blocks = CHM_MAX_BLOCKS_CACHED;
 
     if (ctx->entries) {
         for (int i = 0; i < ctx->entry_count; i++) {
