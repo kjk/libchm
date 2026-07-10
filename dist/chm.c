@@ -1339,6 +1339,8 @@ static int collect_entries(chm_ctx *ctx) {
                 while (cur < end) {
                     uint64_t nlen;
                     if (!parse_cword(&cur, end, &nlen)) break;
+
+                    if ((uint64_t)(end - cur) < nlen) break;
                     cur += nlen;
                     skip_PMGL_entry_data(&cur, end);
                     count++;

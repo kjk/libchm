@@ -570,6 +570,11 @@ static int collect_entries(chm_ctx *ctx) {
                 while (cur < end) {
                     uint64_t nlen;
                     if (!parse_cword(&cur, end, &nlen)) break;
+                    /* the name can't be longer than the bytes left in the page;
+                       without this an over-long cword would advance cur past end
+                       (wrapping the pointer) and the following skips would read
+                       out of bounds. Mirrors the check in parse_PMGL_entry. */
+                    if ((uint64_t)(end - cur) < nlen) break;
                     cur += nlen;
                     skip_PMGL_entry_data(&cur, end);
                     count++;
