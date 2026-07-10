@@ -5,7 +5,7 @@
 // dist/chm.h : copy of src/chm.h
 // dist/chm.c : src/chm.h + src/chm_internal.h + src/lzx.c + src/chm.c (with local includes stripped)
 import { $ } from "bun";
-import { readFileSync, writeFileSync, mkdirSync, existsSync, statSync, rmSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, rmSync } from "fs";
 import { join } from "path";
 
 const ROOT = `${import.meta.dir}/..`.replaceAll("\\", "/");
@@ -61,25 +61,9 @@ function stripTrailingWS(s: string): string {
   return s.replace(/[ \t]+$/gm, "").replace(/\n{3,}/g, "\n\n");
 }
 
-export function distInputPaths(): string[] {
-  return [
-    join(SRC, "chm.h"),
-    join(SRC, "chm_internal.h"),
-    ...MODULES.map(m => join(SRC, m)),
-  ];
-}
-
-export function distOutdated(): boolean {
-  if (!existsSync(DIST_H) || !existsSync(DIST_C)) return true;
-  const outM = Math.min(statSync(DIST_H).mtimeMs, statSync(DIST_C).mtimeMs);
-  for (const p of distInputPaths()) {
-    if (!existsSync(p) || statSync(p).mtimeMs > outM) return true;
-  }
-  return false;
-}
-
+// Always regenerate and re-verify the amalgamation. mtime-based caching risked
+// compiling a stale dist/ (e.g. into wasm) when a src change wasn't detected.
 export async function ensureDist() {
-  if (!distOutdated()) return;
   await buildDist();
 }
 

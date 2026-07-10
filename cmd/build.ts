@@ -5,7 +5,7 @@
 //
 // Produces out/clang/chm_test(.exe)
 import { $ } from "bun";
-import { existsSync, mkdirSync, rmSync, statSync } from "fs";
+import { mkdirSync, rmSync } from "fs";
 import { resolve as resolvePath } from "path";
 
 const ROOT = `${import.meta.dir}/..`.replaceAll("\\", "/");
@@ -21,46 +21,34 @@ function binName(base: string): string {
 
 const SRCS = ["src/lzx.c", "src/chm.c"];
 const TEST = "test/chm_test.c";
-const PUBLIC_H = `${ROOT}/src/chm.h`;
-const INTERNAL_H = `${ROOT}/src/chm_internal.h`;
-
-function needsRebuild(output: string, ...inputs: string[]): boolean {
-  if (!existsSync(output)) return true;
-  const outMtime = statSync(output).mtimeMs;
-  for (const input of inputs) {
-    if (!existsSync(input)) return true;
-    if (statSync(input).mtimeMs > outMtime) return true;
-  }
-  return false;
-}
 
 function objFor(src: string): string {
   const base = src.replace(/^src\//, "").replace(/\.c$/, "");
   return `${OUT}/${base}.o`;
 }
 
+// Always compile from scratch. mtime-based incremental builds silently served
+// stale binaries when a header/source change wasn't detected, so C code here is
+// always rebuilt clean rather than cached.
 export async function build(useClang = true): Promise<string> {
   if (!useClang && isWindows) {
     // On windows one could use cl, but for this port we use clang everywhere.
   }
+  rmSync(OUT, { recursive: true, force: true });
   mkdirSync(OUT, { recursive: true });
 
   const objs: string[] = [];
   for (const src of SRCS) {
     const obj = objFor(src);
     objs.push(obj);
-    if (needsRebuild(obj, src, PUBLIC_H, INTERNAL_H)) {
-      console.log(`cc ${src}`);
-      await $`clang -O2 -Wall -Werror -I${ROOT}/src -c ${src} -o ${obj}`.cwd(ROOT);
-    }
+    console.log(`cc ${src}`);
+    await $`clang -O2 -Wall -Werror -I${ROOT}/src -c ${src} -o ${obj}`.cwd(ROOT);
   }
 
   const exe = `${OUT}/${binName("chm_test")}`;
   const testSrc = `${ROOT}/${TEST}`;
-  if (needsRebuild(exe, ...objs, testSrc, PUBLIC_H, INTERNAL_H)) {
-    console.log("link chm_test");
-    await $`clang -O2 -Wall -Werror -I${ROOT}/src ${objs} ${testSrc} -o ${exe}`.cwd(ROOT);
-  }
+  console.log("link chm_test");
+  await $`clang -O2 -Wall -Werror -I${ROOT}/src ${objs} ${testSrc} -o ${exe}`.cwd(ROOT);
   return exe;
 }
 

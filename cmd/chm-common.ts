@@ -23,15 +23,6 @@ function binName(base: string): string {
   return isWindows ? `${base}.exe` : base;
 }
 
-function needsRebuild(output: string, inputs: string[]): boolean {
-  if (!existsSync(output)) return true;
-  const outMtime = statSync(output).mtimeMs;
-  for (const input of inputs) {
-    if (!existsSync(input) || statSync(input).mtimeMs > outMtime) return true;
-  }
-  return false;
-}
-
 function writeFileIfChanged(path: string, data: string) {
   if (existsSync(path) && readFileSync(path, "utf8") === data) return;
   writeFileSync(path, data);
@@ -341,27 +332,11 @@ export async function buildDumpers(): Promise<Dumpers> {
 
   const ours = join(OUT, binName("our-dump"));
   const chmlib = join(OUT, binName("chmlib-dump"));
-  const ourInputs = [
-    OUR_DUMP_C,
-    join(ROOT, "src", "chm.h"),
-    join(ROOT, "src", "chm_internal.h"),
-    join(ROOT, "src", "chm.c"),
-    join(ROOT, "src", "lzx.c"),
-  ];
-  const chmlibInputs = [
-    CHMLIB_DUMP_C,
-    join(CHMLIB_DIR, "src", "chm_lib.h"),
-    join(CHMLIB_DIR, "src", "chm_lib.c"),
-    join(CHMLIB_DIR, "src", "lzx.c"),
-    join(CHMLIB_DIR, "src", "lzx.h"),
-  ];
-
-  if (needsRebuild(ours, ourInputs)) {
-    await $`clang -O2 -Wall -Werror -I${join(ROOT, "src")} ${join(ROOT, "src", "lzx.c")} ${join(ROOT, "src", "chm.c")} ${OUR_DUMP_C} -o ${ours}`.cwd(ROOT);
-  }
-  if (needsRebuild(chmlib, chmlibInputs)) {
-    await $`clang -O2 -Wno-macro-redefined -I${join(CHMLIB_DIR, "src")} ${join(CHMLIB_DIR, "src", "lzx.c")} ${join(CHMLIB_DIR, "src", "chm_lib.c")} ${CHMLIB_DUMP_C} -o ${chmlib}`.cwd(ROOT);
-  }
+  // Always recompile from scratch. mtime-based incremental builds silently
+  // served a stale our-dump (built before a source fix), which showed up as
+  // phantom decompression failures, so the C dumpers are always rebuilt clean.
+  await $`clang -O2 -Wall -Werror -I${join(ROOT, "src")} ${join(ROOT, "src", "lzx.c")} ${join(ROOT, "src", "chm.c")} ${OUR_DUMP_C} -o ${ours}`.cwd(ROOT);
+  await $`clang -O2 -Wno-macro-redefined -I${join(CHMLIB_DIR, "src")} ${join(CHMLIB_DIR, "src", "lzx.c")} ${join(CHMLIB_DIR, "src", "chm_lib.c")} ${CHMLIB_DUMP_C} -o ${chmlib}`.cwd(ROOT);
 
   return { ours, chmlib };
 }

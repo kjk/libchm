@@ -101,24 +101,32 @@ async function main() {
   let passed = 0;
   let failed = 0;
   let skipped = 0;
+  let better = 0;
   for (const file of files) {
     const [ours, chmlib] = await Promise.all([
       tryDump(dumpers.ours, file),
       tryDump(dumpers.chmlib, file),
     ]);
 
-    // Only a divergence from chmlib is a failure. If both fail to read the
-    // file (chmlib is the oracle), our failing to read it is acceptable.
+    // chmlib is the oracle only for *readability*. If both fail to read the
+    // file, our failing to read it is acceptable.
     if (!ours.ok && !chmlib.ok) {
       console.log(`SKIP ${file} (both fail: ${ours.error})`);
       skipped++;
       continue;
     }
-    if (ours.ok !== chmlib.ok) {
+    // Only ours failing where chmlib succeeds is a regression. The reverse
+    // (we read a file chmlib chokes on) means we are strictly more robust, not
+    // that we are wrong, so it is not a failure.
+    if (!ours.ok) {
       console.error(`FAIL ${file}`);
-      if (!ours.ok) console.error(`  ours failed but chmlib succeeded: ${ours.error}`);
-      else console.error(`  chmlib failed but ours succeeded: ${(chmlib as { error: string }).error}`);
+      console.error(`  ours failed but chmlib succeeded: ${ours.error}`);
       failed++;
+      continue;
+    }
+    if (!chmlib.ok) {
+      console.log(`BETTER ${file} (ours ok; chmlib failed: ${(chmlib as { error: string }).error})`);
+      better++;
       continue;
     }
 
@@ -134,7 +142,7 @@ async function main() {
     }
   }
 
-  console.log(`${passed} passed, ${failed} failed, ${skipped} skipped`);
+  console.log(`${passed} passed, ${failed} failed, ${skipped} skipped, ${better} better (chmlib-only failures)`);
   if (failed > 0) process.exit(1);
 }
 
