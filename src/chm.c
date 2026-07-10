@@ -902,6 +902,12 @@ static int64_t decompress_block(chm_ctx *ctx, uint64_t block, uint8_t** ubuffer)
                 if (!get_cmpblock_bounds(ctx, curBlockIdx, &cmpStart, &cmpLen) || cmpLen < 0 ||
                     cmpLen > cbufferLen || fetch_bytes(ctx, cbuffer, cmpStart, cmpLen) != cmpLen ||
                     LZXdecompress(ctx->lzx_state, cbuffer, lbuffer, (int)cmpLen, (int)ctx->reset_table.block_len) != DECR_OK) {
+                    /* The LZX decoder state is now indeterminate (we may have
+                       LZXreset above and/or partially decoded). Forget which
+                       block we last produced so the next request rebuilds the
+                       state from a reset boundary instead of trusting a stale
+                       lzx_last_block. */
+                    ctx->lzx_last_block = -1;
                     chm_free(ctx, lbuffer);
                     chm_free(ctx, cbuffer);
                     return (int64_t)0;
@@ -933,6 +939,12 @@ static int64_t decompress_block(chm_ctx *ctx, uint64_t block, uint8_t** ubuffer)
     ok = get_cmpblock_bounds(ctx, block, &cmpStart, &cmpLen);
     if (!ok || cmpLen > cbufferLen || fetch_bytes(ctx, cbuffer, cmpStart, cmpLen) != cmpLen ||
         LZXdecompress(ctx->lzx_state, cbuffer, lbuffer, (int)cmpLen, (int)ctx->reset_table.block_len) != DECR_OK) {
+        /* Decode failed: the LZX state is now indeterminate (we may have reset
+           and/or partially decoded into the window). Invalidate lzx_last_block
+           so the next request rebuilds from a reset boundary. Without this, a
+           later read of an already-seen block trusts the stale block index,
+           skips the required reset+catch-up, and silently decodes garbage. */
+        ctx->lzx_last_block = -1;
         chm_free(ctx, cbuffer);
         *ubuffer = NULL;
         return (int64_t)0;

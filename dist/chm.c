@@ -1629,6 +1629,8 @@ static int64_t decompress_block(chm_ctx *ctx, uint64_t block, uint8_t** ubuffer)
                 if (!get_cmpblock_bounds(ctx, curBlockIdx, &cmpStart, &cmpLen) || cmpLen < 0 ||
                     cmpLen > cbufferLen || fetch_bytes(ctx, cbuffer, cmpStart, cmpLen) != cmpLen ||
                     LZXdecompress(ctx->lzx_state, cbuffer, lbuffer, (int)cmpLen, (int)ctx->reset_table.block_len) != DECR_OK) {
+
+                    ctx->lzx_last_block = -1;
                     chm_free(ctx, lbuffer);
                     chm_free(ctx, cbuffer);
                     return (int64_t)0;
@@ -1658,6 +1660,8 @@ static int64_t decompress_block(chm_ctx *ctx, uint64_t block, uint8_t** ubuffer)
     ok = get_cmpblock_bounds(ctx, block, &cmpStart, &cmpLen);
     if (!ok || cmpLen > cbufferLen || fetch_bytes(ctx, cbuffer, cmpStart, cmpLen) != cmpLen ||
         LZXdecompress(ctx->lzx_state, cbuffer, lbuffer, (int)cmpLen, (int)ctx->reset_table.block_len) != DECR_OK) {
+
+        ctx->lzx_last_block = -1;
         chm_free(ctx, cbuffer);
         *ubuffer = NULL;
         return (int64_t)0;

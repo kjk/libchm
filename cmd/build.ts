@@ -48,7 +48,9 @@ export async function build(useClang = true): Promise<string> {
   const exe = `${OUT}/${binName("chm_test")}`;
   const testSrc = `${ROOT}/${TEST}`;
   console.log("link chm_test");
-  await $`clang -O2 -Wall -Werror -I${ROOT}/src ${objs} ${testSrc} -o ${exe}`.cwd(ROOT);
+  // chm_test.c uses fopen; silence the MSVC/UCRT deprecation so -Werror
+  // doesn't fail the Windows build (the library sources use no unsafe CRT).
+  await $`clang -O2 -Wall -Werror -D_CRT_SECURE_NO_WARNINGS -I${ROOT}/src ${objs} ${testSrc} -o ${exe}`.cwd(ROOT);
   return exe;
 }
 
