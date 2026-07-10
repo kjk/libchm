@@ -1,9 +1,9 @@
 // chm-common.ts -- shared helpers for CHM command scripts.
-import { $ } from "bun";
 import {
   existsSync,
   mkdirSync,
   readdirSync,
+  rmSync,
   statSync,
   writeFileSync,
   readFileSync,
@@ -14,7 +14,8 @@ import { CHMLIB_DIR, getDeps } from "./get-deps";
 export const ROOT = resolve(import.meta.dir, "..");
 
 const OUT = join(ROOT, "out", "chm-tools");
-const OUR_DUMP_C = join(OUT, "our-dump.c");
+// our-dump is a checked-in source file; chmlib-dump is generated (see below).
+const OUR_DUMP_C = join(ROOT, "cmd", "our-dump.c");
 const CHMLIB_DUMP_C = join(OUT, "chmlib-dump.c");
 
 const isWindows = process.platform === "win32";
@@ -28,174 +29,29 @@ function writeFileIfChanged(path: string, data: string) {
   writeFileSync(path, data);
 }
 
-const OUR_DUMP_SOURCE = String.raw`
-#include "chm.h"
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-static int write_all(const void *p, size_t n)
-{
-    return fwrite(p, 1, n, stdout) == n;
-}
-
-static int write_u32(uint32_t v)
-{
-    unsigned char b[4];
-    b[0] = (unsigned char)(v);
-    b[1] = (unsigned char)(v >> 8);
-    b[2] = (unsigned char)(v >> 16);
-    b[3] = (unsigned char)(v >> 24);
-    return write_all(b, sizeof(b));
-}
-
-static int write_u64(uint64_t v)
-{
-    unsigned char b[8];
-    for (int i = 0; i < 8; i++) b[i] = (unsigned char)(v >> (i * 8));
-    return write_all(b, sizeof(b));
-}
-
-static uint32_t entry_flags(const struct chm_entry *e)
-{
-    uint32_t flags = 0;
-    if (e->is_compressed) flags |= 1u;
-    if (e->is_dir) flags |= 2u;
-    if (e->is_file) flags |= 4u;
-    if (e->is_normal) flags |= 8u;
-    if (e->is_meta) flags |= 16u;
-    if (e->is_special) flags |= 32u;
-    return flags;
-}
-
-static int g_emit_data = 1;
-
-static int emit_entry(chm_ctx *ctx, struct chm_entry *e)
-{
-    const char *path = e->path ? e->path : "";
-    size_t path_len = strlen(path);
-    uint8_t *data = NULL;
-    uint64_t data_len = g_emit_data ? e->length : 0;
-
-    if (path_len > UINT32_MAX) return 0;
-    if (data_len > SIZE_MAX) return 0;
-    if (data_len > 0) {
-        data = (uint8_t *)malloc((size_t)data_len);
-        if (!data) return 0;
-        int64_t n = chm_read_entry(ctx, e, data);
-        if (n != (int64_t)data_len) {
-            free(data);
-            return 0;
-        }
-    }
-
-    int ok = write_u32((uint32_t)path_len) &&
-             write_u64(e->start) &&
-             write_u64(e->length) &&
-             write_u32(entry_flags(e)) &&
-             write_u64(data_len) &&
-             write_all(path, path_len) &&
-             (data_len == 0 || write_all(data, (size_t)data_len));
-    free(data);
-    return ok;
-}
-
-int main(int argc, char **argv)
-{
-    const char *file_path = NULL;
-    if (argc == 2) {
-        file_path = argv[1];
-    } else if (argc == 3 && strcmp(argv[1], "-list") == 0) {
-        g_emit_data = 0;
-        file_path = argv[2];
-    } else {
-        fprintf(stderr, "usage: our-dump [-list] file.chm\n");
-        return 2;
-    }
-
-    FILE *f = fopen(file_path, "rb");
-    if (!f) {
-        perror("fopen");
-        return 1;
-    }
-    if (fseek(f, 0, SEEK_END) != 0) {
-        fclose(f);
-        return 1;
-    }
-    long sz = ftell(f);
-    if (sz <= 0) {
-        fclose(f);
-        fprintf(stderr, "empty file\n");
-        return 1;
-    }
-    if (fseek(f, 0, SEEK_SET) != 0) {
-        fclose(f);
-        return 1;
-    }
-
-    uint8_t *file_data = (uint8_t *)malloc((size_t)sz);
-    if (!file_data) {
-        fclose(f);
-        return 1;
-    }
-    if (fread(file_data, 1, (size_t)sz, f) != (size_t)sz) {
-        perror("fread");
-        free(file_data);
-        fclose(f);
-        return 1;
-    }
-    fclose(f);
-
-    chm_ctx *ctx = chm_ctx_new(NULL, NULL, NULL, NULL);
-    if (!ctx) {
-        free(file_data);
-        return 1;
-    }
-    if (!chm_open(ctx, file_data, (size_t)sz)) {
-        fprintf(stderr, "chm_open failed\n");
-        chm_ctx_free(ctx);
-        free(file_data);
-        return 1;
-    }
-
-    if (!write_all("CHMDUMP1\n", 9)) {
-        chm_close(ctx);
-        chm_ctx_free(ctx);
-        free(file_data);
-        return 1;
-    }
-
-    struct chm_entry **entries = NULL;
-    int n = chm_get_entries(ctx, &entries);
-    for (int i = 0; i < n; i++) {
-        if (!emit_entry(ctx, entries[i])) {
-            fprintf(stderr, "failed to emit %s\n", entries[i]->path ? entries[i]->path : "");
-            chm_close(ctx);
-            chm_ctx_free(ctx);
-            free(file_data);
-            return 1;
-        }
-    }
-
-    chm_close(ctx);
-    chm_ctx_free(ctx);
-    free(file_data);
-    return 0;
-}
-`;
-
 const CHMLIB_DUMP_SOURCE = String.raw`
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <io.h>
+#include <fcntl.h>
+#endif
 #include "chm_lib.h"
 
 struct emit_ctx {
     int failed;
 };
+
+/* stdout carries a binary dump; keep Windows from translating \n to \r\n. */
+static void set_stdout_binary(void)
+{
+#ifdef _WIN32
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
+}
 
 static int write_all(const void *p, size_t n)
 {
@@ -217,6 +73,11 @@ static int write_u64(uint64_t v)
     unsigned char b[8];
     for (int i = 0; i < 8; i++) b[i] = (unsigned char)(v >> (i * 8));
     return write_all(b, sizeof(b));
+}
+
+static int write_u8(uint8_t v)
+{
+    return write_all(&v, 1);
 }
 
 static uint32_t unit_flags(const struct chmUnitInfo *ui)
@@ -237,17 +98,24 @@ static int emit_unit(struct chmFile *h, struct chmUnitInfo *ui)
 {
     size_t path_len = strlen(ui->path);
     unsigned char *data = NULL;
-    uint64_t data_len = g_emit_data ? (uint64_t)ui->length : 0;
+    uint64_t want = g_emit_data ? (uint64_t)ui->length : 0;
+    uint8_t read_ok = 1;
+    uint64_t data_len = 0;
 
     if (path_len > UINT32_MAX) return 0;
-    if (data_len > SIZE_MAX) return 0;
-    if (data_len > 0) {
-        data = (unsigned char *)malloc((size_t)data_len);
+    if (want > SIZE_MAX) return 0;
+    if (want > 0) {
+        data = (unsigned char *)malloc((size_t)want);
         if (!data) return 0;
-        int64_t n = chm_retrieve_object(h, ui, data, 0, (int64_t)data_len);
-        if (n != (int64_t)data_len) {
+        int64_t n = chm_retrieve_object(h, ui, data, 0, (int64_t)want);
+        if (n != (int64_t)want) {
+            /* record the read failure for this entry and keep going (see the
+               matching note in our-dump); don't abort the whole dump. */
+            read_ok = 0;
             free(data);
-            return 0;
+            data = NULL;
+        } else {
+            data_len = want;
         }
     }
 
@@ -255,6 +123,7 @@ static int emit_unit(struct chmFile *h, struct chmUnitInfo *ui)
              write_u64((uint64_t)ui->start) &&
              write_u64((uint64_t)ui->length) &&
              write_u32(unit_flags(ui)) &&
+             write_u8(read_ok) &&
              write_u64(data_len) &&
              write_all(ui->path, path_len) &&
              (data_len == 0 || write_all(data, (size_t)data_len));
@@ -285,6 +154,7 @@ int main(int argc, char **argv)
         fprintf(stderr, "usage: chmlib-dump [-list] file.chm\n");
         return 2;
     }
+    set_stdout_binary();
 
     /* The sumatra CHMLib fork takes the whole archive as an in-memory buffer
        (chm_open(data, len)), matching our own API, so read the file first. */
@@ -328,7 +198,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    if (!write_all("CHMDUMP1\n", 9)) {
+    if (!write_all("CHMDUMP2\n", 9)) {
         chm_close(h);
         free(file_data);
         return 1;
@@ -355,6 +225,9 @@ export interface ChmDumpEntry {
   start: bigint;
   length: bigint;
   flags: number;
+  // whether the entry's content could be read/decompressed. When false, `data`
+  // is empty (the dumper records the failure instead of aborting the whole file).
+  readOk: boolean;
   data: Uint8Array;
 }
 
@@ -363,18 +236,39 @@ export interface ChmDump {
   stderr: string;
 }
 
+// Run a compiler invocation, printing the full command first so the build is
+// reproducible/inspectable. Uses spawn (no shell) so args with spaces are exact.
+async function runCompile(label: string, args: string[]): Promise<void> {
+  const printable = args.map((a) => (/[\s"]/.test(a) ? JSON.stringify(a) : a)).join(" ");
+  console.log(`[build ${label}] ${printable}`);
+  const proc = Bun.spawn(args, { cwd: ROOT, stdout: "inherit", stderr: "inherit" });
+  const code = await proc.exited;
+  if (code !== 0) throw new Error(`compile failed (${label}): clang exited ${code}`);
+}
+
 export async function buildDumpers(): Promise<Dumpers> {
   await getDeps();
   mkdirSync(OUT, { recursive: true });
-  writeFileIfChanged(OUR_DUMP_C, OUR_DUMP_SOURCE);
+  // OUR_DUMP_C is a checked-in source file (cmd/our-dump.c); only the CHMLib
+  // oracle dumper is generated from an embedded string.
   writeFileIfChanged(CHMLIB_DUMP_C, CHMLIB_DUMP_SOURCE);
 
   const ours = join(OUT, binName("our-dump"));
   const chmlib = join(OUT, binName("chmlib-dump"));
-  // Always recompile from scratch. mtime-based incremental builds silently
-  // served a stale our-dump (built before a source fix), which showed up as
-  // phantom decompression failures, so the C dumpers are always rebuilt clean.
-  await $`clang -O2 -Wall -Werror -D_CRT_SECURE_NO_WARNINGS -I${join(ROOT, "src")} ${join(ROOT, "src", "lzx.c")} ${join(ROOT, "src", "chm.c")} ${OUR_DUMP_C} -o ${ours}`.cwd(ROOT);
+
+  // Clean build: delete any prior binaries so a failed or stale compile can
+  // never be silently reused (that once showed up as phantom decompression
+  // failures). The dumpers are always compiled fresh from their full sources.
+  rmSync(ours, { force: true });
+  rmSync(chmlib, { force: true });
+
+  await runCompile("our-dump", [
+    "clang", "-O2", "-Wall", "-Werror", "-D_CRT_SECURE_NO_WARNINGS",
+    `-I${join(ROOT, "src")}`,
+    join(ROOT, "src", "lzx.c"), join(ROOT, "src", "chm.c"), OUR_DUMP_C,
+    "-o", ours,
+  ]);
+
   // The sumatra CHMLib fork is written for a Windows/prefix-header build: it
   // relies on <limits.h> being pulled in implicitly and gates its Windows
   // shims (a local ffs, strcasecmp/strncasecmp -> stricmp/strnicmp) behind
@@ -387,7 +281,12 @@ export async function buildDumpers(): Promise<Dumpers> {
   const chmlibShims = isWindows
     ? ["-DWIN32", "-D_CRT_SECURE_NO_WARNINGS", "-D_CRT_NONSTDC_NO_WARNINGS"]
     : ["-D_stricmp=strcasecmp"];
-  await $`clang -O2 -Wno-macro-redefined -include limits.h ${chmlibShims} -I${CHMLIB_DIR} ${join(CHMLIB_DIR, "lzx.c")} ${join(CHMLIB_DIR, "chm_lib.c")} ${CHMLIB_DUMP_C} -o ${chmlib}`.cwd(ROOT);
+  await runCompile("chmlib-dump", [
+    "clang", "-O2", "-Wno-macro-redefined", "-include", "limits.h",
+    ...chmlibShims, `-I${CHMLIB_DIR}`,
+    join(CHMLIB_DIR, "lzx.c"), join(CHMLIB_DIR, "chm_lib.c"), CHMLIB_DUMP_C,
+    "-o", chmlib,
+  ]);
 
   return { ours, chmlib };
 }
@@ -458,18 +357,19 @@ export async function readDump(exe: string, file: string, includeContent = true)
 
   const bytes = new Uint8Array(stdoutBuf);
   const magic = new TextDecoder().decode(bytes.subarray(0, 9));
-  if (magic !== "CHMDUMP1\n") throw new Error(`${basename(exe)} produced invalid dump`);
+  if (magic !== "CHMDUMP2\n") throw new Error(`${basename(exe)} produced invalid dump`);
 
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const dec = new TextDecoder();
   const entries: ChmDumpEntry[] = [];
   let off = 9;
   while (off < bytes.length) {
-    if (off + 32 > bytes.length) throw new Error(`${basename(exe)} produced truncated entry header`);
+    if (off + 33 > bytes.length) throw new Error(`${basename(exe)} produced truncated entry header`);
     const pathLen = readU32(view, off); off += 4;
     const start = readU64(view, off); off += 8;
     const length = readU64(view, off); off += 8;
     const flags = readU32(view, off); off += 4;
+    const readOk = view.getUint8(off) !== 0; off += 1;
     const dataLenBig = readU64(view, off); off += 8;
     if (dataLenBig > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("entry too large to parse");
     const dataLen = Number(dataLenBig);
@@ -478,7 +378,7 @@ export async function readDump(exe: string, file: string, includeContent = true)
     off += pathLen;
     const data = bytes.slice(off, off + dataLen);
     off += dataLen;
-    entries.push({ path, start, length, flags, data });
+    entries.push({ path, start, length, flags, readOk, data });
   }
   return { entries, stderr };
 }

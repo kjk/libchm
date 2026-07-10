@@ -64,7 +64,14 @@ function compareEntries(ours: ChmDumpEntry[], theirs: ChmDumpEntry[]): string[] 
     if (a.start !== b.start) errors.push(`${path}: start ours=${a.start} chmlib=${b.start}`);
     if (a.length !== b.length) errors.push(`${path}: length ours=${a.length} chmlib=${b.length}`);
     if (a.flags !== b.flags) errors.push(`${path}: flags ours=${a.flags} chmlib=${b.flags}`);
-    if (!sameBytes(a.data, b.data)) errors.push(`${path}: content differs (${a.data.length} vs ${b.data.length} bytes)`);
+    // chmlib is the oracle for readability per-entry too: if it could read the
+    // entry but we couldn't, that's a regression; if the bytes differ, that's
+    // corruption. Entries both fail to read (or that only chmlib fails) are fine.
+    if (b.readOk && !a.readOk) {
+      errors.push(`${path}: content unreadable by ours but chmlib read it (${b.data.length} bytes)`);
+    } else if (a.readOk && b.readOk && !sameBytes(a.data, b.data)) {
+      errors.push(`${path}: content differs (${a.data.length} vs ${b.data.length} bytes)`);
+    }
   }
   return errors;
 }
