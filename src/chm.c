@@ -700,6 +700,22 @@ static uint8_t* find_in_PMGL(uint8_t* page_buf, uint32_t block_len, const char* 
     return NULL;
 }
 
+/* case-insensitive compare of a counted (non-NUL-terminated) name against a
+   C string, with the same ordering strcasecmp would give if name[len] were a
+   terminating NUL. Returns <0, 0 or >0. */
+static int cmp_counted_ci(const char* name, size_t len, const char* objPath) {
+    for (size_t i = 0; i < len; i++) {
+        unsigned char a = (unsigned char)name[i];
+        unsigned char b = (unsigned char)objPath[i];
+        if (b == '\0') return 1; /* name is longer -> greater */
+        if (a >= 'A' && a <= 'Z') a = (unsigned char)(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z') b = (unsigned char)(b - 'A' + 'a');
+        if (a != b) return a < b ? -1 : 1;
+    }
+    /* all of name matched; objPath is equal iff it also ends here */
+    return objPath[len] == '\0' ? 0 : -1;
+}
+
 /* find which block should be searched next for the entry; -1 if no block */
 static int32_t find_in_PMGI(uint8_t* page_buf, uint32_t block_len, const char* objPath) {
     /* XXX: modify this to do a binary search using the nice index structure
@@ -723,9 +739,12 @@ static int32_t find_in_PMGI(uint8_t* page_buf, uint32_t block_len, const char* o
         /* grab the name */
         if (!parse_cword(&cur, end, &strLen)) return -1;
         if (strLen == 0) return -1;
+        /* the name must fit in the bytes remaining, else the compare below
+           would read past the page buffer */
+        if ((uint64_t)(end - cur) < strLen) return -1;
 
-        /* compare directly */
-        if (strcasecmp((const char*)cur, objPath) > 0) return page;
+        /* compare against the counted name (page names are not NUL-terminated) */
+        if (cmp_counted_ci((const char*)cur, (size_t)strLen, objPath) > 0) return page;
 
         cur += strLen;
 
@@ -889,23 +908,28 @@ static int64_t decompress_block(chm_ctx *ctx, uint64_t block, uint8_t** ubuffer)
         }
     }
 
-    /* allocate fresh buffer for this block (no caching) */
-    lbuffer = (uint8_t *)chm_alloc(ctx, (size_t)ctx->reset_table.block_len);
-    if (!lbuffer) {
-        chm_free(ctx, cbuffer);
-        return -1;
+    /* decompress the wanted block into the persistent single-block cache; it is
+       owned by ctx (freed in chm_close), not by the caller. */
+    if (!ctx->dblock_buf) {
+        ctx->dblock_buf = (uint8_t *)chm_alloc(ctx, (size_t)ctx->reset_table.block_len);
+        if (!ctx->dblock_buf) {
+            chm_free(ctx, cbuffer);
+            return -1;
+        }
     }
+    lbuffer = ctx->dblock_buf;
+    ctx->dblock_idx = -1; /* invalidate until the decode below succeeds */
     *ubuffer = lbuffer;
 
     ok = get_cmpblock_bounds(ctx, block, &cmpStart, &cmpLen);
     if (!ok || cmpLen > cbufferLen || fetch_bytes(ctx, cbuffer, cmpStart, cmpLen) != cmpLen ||
         LZXdecompress(ctx->lzx_state, cbuffer, lbuffer, (int)cmpLen, (int)ctx->reset_table.block_len) != DECR_OK) {
         chm_free(ctx, cbuffer);
-        chm_free(ctx, lbuffer);
         *ubuffer = NULL;
         return (int64_t)0;
     }
     ctx->lzx_last_block = (int)block;
+    ctx->dblock_idx = (int64_t)block;
 
     chm_free(ctx, cbuffer);
     return ctx->reset_table.block_len;
@@ -932,6 +956,15 @@ static int64_t decompress_region(chm_ctx *ctx, uint8_t* buf, uint64_t start, int
     nLen = len;
     if (nLen > (ctx->reset_table.block_len - nOffset)) nLen = ctx->reset_table.block_len - nOffset;
 
+    /* if this block is already decompressed, serve it from the cache. this is
+       required for correctness, not just speed: the LZX decoder cannot re-emit
+       a block it has already advanced past (e.g. a later entry sharing the same
+       compressed block). */
+    if (ctx->dblock_buf && ctx->dblock_idx == (int64_t)nBlock) {
+        memcpy(buf, ctx->dblock_buf + nOffset, (unsigned int)nLen);
+        return nLen;
+    }
+
     /* data request not satisfied, so... start up the decompressor machine */
     if (!ctx->lzx_state) {
         int window_size = ffs(ctx->window_size) - 1;
@@ -945,15 +978,14 @@ static int64_t decompress_region(chm_ctx *ctx, uint8_t* buf, uint64_t start, int
         return (int64_t)0;
     }
 
-    /* decompress some data */
+    /* decompress some data (ubuffer points into ctx->dblock_buf, ctx-owned) */
     gotLen = decompress_block(ctx, nBlock, &ubuffer);
     /* SumatraPDF: check return value */
-    if (gotLen == (uint64_t)-1) {
+    if (gotLen == (uint64_t)-1 || ubuffer == NULL) {
         return 0;
     }
     if (gotLen < nLen) nLen = gotLen;
     memcpy(buf, ubuffer + nOffset, (unsigned int)nLen);
-    chm_free(ctx, ubuffer);
     return nLen;
 }
 
@@ -1174,6 +1206,10 @@ void chm_close(chm_ctx *ctx)
     if (!ctx) return;
     if (ctx->lzx_state) LZXteardown(ctx->lzx_state);
     ctx->lzx_state = NULL;
+
+    chm_free(ctx, ctx->dblock_buf);
+    ctx->dblock_buf = NULL;
+    ctx->dblock_idx = -1;
 
     /* clear archive fields (keep alloc/free/error/user) */
     if (ctx->entries) {

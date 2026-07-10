@@ -236,6 +236,13 @@ struct chm_ctx {
     struct LZXstate *lzx_state;
     int lzx_last_block;
 
+    /* cache of the most-recently decompressed block. LZX decoding is stateful,
+       so a block cannot be re-decompressed once the decoder has advanced past
+       it; when several entries share one compressed block, later reads must be
+       served from this cache rather than by re-running the decompressor. */
+    uint8_t *dblock_buf;   /* holds block_len decompressed bytes, or NULL */
+    int64_t dblock_idx;    /* which block dblock_buf holds, -1 if none */
+
     /* dir visit state */
     uint64_t dir_page_count;
     uint64_t dir_pages_seen;
