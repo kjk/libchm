@@ -31,3 +31,4 @@ fuzz/*.log
 # chm test corpus (add your own .chm files)
 testfiles/chm/
 /fuzz/minimized
+/fuzz-0.log
