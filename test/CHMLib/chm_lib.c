@@ -1212,7 +1212,9 @@ static int64_t _chm_decompress_block(struct chmFile* h, uint64_t block, uint8_t*
 
                 indexSlot = (int)((curBlockIdx) % h->cache_num_blocks);
                 if (!h->cache_blocks[indexSlot])
-                    h->cache_blocks[indexSlot] = (uint8_t*)malloc((unsigned int)(h->reset_table.block_len));
+                    /* calloc (not malloc): zero fresh cache buffers so bytes past
+                       a partial decode are deterministic for oracle comparison. */
+                    h->cache_blocks[indexSlot] = (uint8_t*)calloc((size_t)h->reset_table.block_len, 1);
                 if (!h->cache_blocks[indexSlot]) {
                     free(cbuffer);
                     return -1;
@@ -1248,7 +1250,9 @@ static int64_t _chm_decompress_block(struct chmFile* h, uint64_t block, uint8_t*
     /* allocate slot in cache */
     indexSlot = (int)(block % h->cache_num_blocks);
     if (!h->cache_blocks[indexSlot])
-        h->cache_blocks[indexSlot] = (uint8_t*)malloc(((unsigned int)h->reset_table.block_len));
+        /* calloc (not malloc): zero fresh cache buffers so bytes past a partial
+           decode are deterministic for oracle comparison. */
+        h->cache_blocks[indexSlot] = (uint8_t*)calloc((size_t)h->reset_table.block_len, 1);
     if (!h->cache_blocks[indexSlot]) {
         free(cbuffer);
         return -1;

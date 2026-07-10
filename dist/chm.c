@@ -1624,11 +1624,14 @@ static int64_t decompress_block(chm_ctx *ctx, uint64_t block, uint8_t** ubuffer)
                 }
 
                 indexSlot = (int)(curBlockIdx % ctx->cache_num_blocks);
-                if (!ctx->cache_blocks[indexSlot])
-                    ctx->cache_blocks[indexSlot] = (uint8_t *)chm_alloc(ctx, (size_t)ctx->reset_table.block_len);
                 if (!ctx->cache_blocks[indexSlot]) {
-                    chm_free(ctx, cbuffer);
-                    return -1;
+                    ctx->cache_blocks[indexSlot] = (uint8_t *)chm_alloc(ctx, (size_t)ctx->reset_table.block_len);
+                    if (!ctx->cache_blocks[indexSlot]) {
+                        chm_free(ctx, cbuffer);
+                        return -1;
+                    }
+
+                    memset(ctx->cache_blocks[indexSlot], 0, (size_t)ctx->reset_table.block_len);
                 }
                 ctx->cache_block_indices[indexSlot] = curBlockIdx;
                 lbuffer = ctx->cache_blocks[indexSlot];
@@ -1655,11 +1658,14 @@ static int64_t decompress_block(chm_ctx *ctx, uint64_t block, uint8_t** ubuffer)
     }
 
     indexSlot = (int)(block % ctx->cache_num_blocks);
-    if (!ctx->cache_blocks[indexSlot])
-        ctx->cache_blocks[indexSlot] = (uint8_t *)chm_alloc(ctx, (size_t)ctx->reset_table.block_len);
     if (!ctx->cache_blocks[indexSlot]) {
-        chm_free(ctx, cbuffer);
-        return -1;
+        ctx->cache_blocks[indexSlot] = (uint8_t *)chm_alloc(ctx, (size_t)ctx->reset_table.block_len);
+        if (!ctx->cache_blocks[indexSlot]) {
+            chm_free(ctx, cbuffer);
+            return -1;
+        }
+
+        memset(ctx->cache_blocks[indexSlot], 0, (size_t)ctx->reset_table.block_len);
     }
     ctx->cache_block_indices[indexSlot] = block;
     lbuffer = ctx->cache_blocks[indexSlot];

@@ -896,11 +896,15 @@ static int64_t decompress_block(chm_ctx *ctx, uint64_t block, uint8_t** ubuffer)
                    need the side-effect on the LZX state, but caching it lets a
                    later read of this block skip re-decompression). */
                 indexSlot = (int)(curBlockIdx % ctx->cache_num_blocks);
-                if (!ctx->cache_blocks[indexSlot])
-                    ctx->cache_blocks[indexSlot] = (uint8_t *)chm_alloc(ctx, (size_t)ctx->reset_table.block_len);
                 if (!ctx->cache_blocks[indexSlot]) {
-                    chm_free(ctx, cbuffer);
-                    return -1;
+                    ctx->cache_blocks[indexSlot] = (uint8_t *)chm_alloc(ctx, (size_t)ctx->reset_table.block_len);
+                    if (!ctx->cache_blocks[indexSlot]) {
+                        chm_free(ctx, cbuffer);
+                        return -1;
+                    }
+                    /* zero fresh cache buffers so bytes past a (partial) decode
+                       are deterministic instead of uninitialized heap. */
+                    memset(ctx->cache_blocks[indexSlot], 0, (size_t)ctx->reset_table.block_len);
                 }
                 ctx->cache_block_indices[indexSlot] = curBlockIdx;
                 lbuffer = ctx->cache_blocks[indexSlot];
@@ -934,11 +938,15 @@ static int64_t decompress_block(chm_ctx *ctx, uint64_t block, uint8_t** ubuffer)
        before the decode so that, matching CHMLib, a later read of this block is
        served the (partially) decoded buffer even if the decode below fails. */
     indexSlot = (int)(block % ctx->cache_num_blocks);
-    if (!ctx->cache_blocks[indexSlot])
-        ctx->cache_blocks[indexSlot] = (uint8_t *)chm_alloc(ctx, (size_t)ctx->reset_table.block_len);
     if (!ctx->cache_blocks[indexSlot]) {
-        chm_free(ctx, cbuffer);
-        return -1;
+        ctx->cache_blocks[indexSlot] = (uint8_t *)chm_alloc(ctx, (size_t)ctx->reset_table.block_len);
+        if (!ctx->cache_blocks[indexSlot]) {
+            chm_free(ctx, cbuffer);
+            return -1;
+        }
+        /* zero fresh cache buffers so bytes past a (partial) decode are
+           deterministic instead of uninitialized heap. */
+        memset(ctx->cache_blocks[indexSlot], 0, (size_t)ctx->reset_table.block_len);
     }
     ctx->cache_block_indices[indexSlot] = block;
     lbuffer = ctx->cache_blocks[indexSlot];
