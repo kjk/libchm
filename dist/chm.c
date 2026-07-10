@@ -990,6 +990,8 @@ static int read_itsp_header(uint8_t **pData, unsigned int *pDataLen, struct chmI
     if (dest->header_len != _CHM_ITSP_V1_LEN) return 0;
 
     if (dest->block_len < _CHM_PMGL_LEN) return 0;
+
+    if (dest->block_len > 2097152) return 0;
     return 1;
 }
 

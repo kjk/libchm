@@ -192,6 +192,10 @@ static int read_itsp_header(uint8_t **pData, unsigned int *pDataLen, struct chmI
        guarantees the page buffer is >= 4 bytes for the marker memcmp before
        read_pmgl_header/read_pmgi_header run */
     if (dest->block_len < _CHM_PMGL_LEN) return 0;
+    /* block_len is the directory block size (normally 0x1000). Cap it so a
+       bogus header can't make dir_session_begin request a multi-gigabyte page
+       buffer (out-of-memory); 2 MB is far above any real directory block. */
+    if (dest->block_len > 2097152) return 0;
     return 1;
 }
 
