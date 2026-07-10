@@ -186,11 +186,12 @@ int main(int argc, char **argv)
 `;
 
 const CHMLIB_DUMP_SOURCE = String.raw`
-#include "chm_lib.h"
 #include <stdint.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "chm_lib.h"
 
 struct emit_ctx {
     int failed;
@@ -243,8 +244,8 @@ static int emit_unit(struct chmFile *h, struct chmUnitInfo *ui)
     if (data_len > 0) {
         data = (unsigned char *)malloc((size_t)data_len);
         if (!data) return 0;
-        LONGINT64 n = chm_retrieve_object(h, ui, data, 0, (LONGINT64)data_len);
-        if (n != (LONGINT64)data_len) {
+        int64_t n = chm_retrieve_object(h, ui, data, 0, (int64_t)data_len);
+        if (n != (int64_t)data_len) {
             free(data);
             return 0;
         }
@@ -285,14 +286,51 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    struct chmFile *h = chm_open(file_path);
+    /* The sumatra CHMLib fork takes the whole archive as an in-memory buffer
+       (chm_open(data, len)), matching our own API, so read the file first. */
+    FILE *f = fopen(file_path, "rb");
+    if (!f) {
+        perror("fopen");
+        return 1;
+    }
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return 1;
+    }
+    long sz = ftell(f);
+    if (sz <= 0) {
+        fclose(f);
+        fprintf(stderr, "empty file\n");
+        return 1;
+    }
+    if (fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return 1;
+    }
+
+    char *file_data = (char *)malloc((size_t)sz);
+    if (!file_data) {
+        fclose(f);
+        return 1;
+    }
+    if (fread(file_data, 1, (size_t)sz, f) != (size_t)sz) {
+        perror("fread");
+        free(file_data);
+        fclose(f);
+        return 1;
+    }
+    fclose(f);
+
+    struct chmFile *h = chm_open(file_data, (size_t)sz);
     if (!h) {
         fprintf(stderr, "chm_open failed\n");
+        free(file_data);
         return 1;
     }
 
     if (!write_all("CHMDUMP1\n", 9)) {
         chm_close(h);
+        free(file_data);
         return 1;
     }
 
@@ -300,6 +338,7 @@ int main(int argc, char **argv)
     ctx.failed = 0;
     int ok = chm_enumerate(h, CHM_ENUMERATE_ALL, enum_cb, &ctx);
     chm_close(h);
+    free(file_data);
     return (ok && !ctx.failed) ? 0 : 1;
 }
 `;
@@ -336,7 +375,11 @@ export async function buildDumpers(): Promise<Dumpers> {
   // served a stale our-dump (built before a source fix), which showed up as
   // phantom decompression failures, so the C dumpers are always rebuilt clean.
   await $`clang -O2 -Wall -Werror -I${join(ROOT, "src")} ${join(ROOT, "src", "lzx.c")} ${join(ROOT, "src", "chm.c")} ${OUR_DUMP_C} -o ${ours}`.cwd(ROOT);
-  await $`clang -O2 -Wno-macro-redefined -I${join(CHMLIB_DIR, "src")} ${join(CHMLIB_DIR, "src", "lzx.c")} ${join(CHMLIB_DIR, "src", "chm_lib.c")} ${CHMLIB_DUMP_C} -o ${chmlib}`.cwd(ROOT);
+  // The sumatra CHMLib fork is written for a Windows/prefix-header build: it
+  // relies on <limits.h> being pulled in implicitly and calls the MSVC-only
+  // _stricmp in one spot. Shim both via flags so the vendored copy stays an
+  // exact mirror of upstream.
+  await $`clang -O2 -Wno-macro-redefined -include limits.h -D_stricmp=strcasecmp -I${CHMLIB_DIR} ${join(CHMLIB_DIR, "lzx.c")} ${join(CHMLIB_DIR, "chm_lib.c")} ${CHMLIB_DUMP_C} -o ${chmlib}`.cwd(ROOT);
 
   return { ours, chmlib };
 }

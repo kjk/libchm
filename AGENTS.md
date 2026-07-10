@@ -21,10 +21,13 @@ No writers. No FS I/O.
 - dist/                — amalgamation (never auto-committed)
 - fuzz/                — crashes/ tracked; corpus/ ignored
 - test/                — chm_test.c , fuzz_target.c
+- test/CHMLib/         — vendored sumatrapdf ext/CHMLib fork (oracle for cmd/test.ts)
 - testfiles/chm/       — .chm corpus (gitignored, populate manually or via scripts)
 
 ## Reference
-- Original: ~/src/sumatrapdf/ext/CHMLib (the sumatra fork with in-mem chm_open)
+- Oracle: test/CHMLib (vendored sumatrapdf ext/CHMLib fork, in-mem chm_open).
+  cmd/test.ts builds chmlib-dump from it and byte-compares against our output.
+  Refresh from https://github.com/sumatrapdfreader/sumatrapdf/tree/master/ext/CHMLib
 - Usage examples: SumatraPDF ChmFile.cpp, ChmDump.cpp, SumatraTest chm bits
 
 ## Build & test
