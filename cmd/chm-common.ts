@@ -401,16 +401,36 @@ function readU64(view: DataView, off: number): bigint {
   return view.getBigUint64(off, true);
 }
 
+// Some malformed/malicious .chm files send a dumper into an infinite loop
+// (upstream CHMLib has such DoS cases). Cap each run so the harness can treat
+// a hang as a read failure instead of blocking forever.
+const DUMP_TIMEOUT_MS = 30_000;
+
 export async function readDump(exe: string, file: string, includeContent = true): Promise<ChmDump> {
-  const result = includeContent
-    ? await $`${exe} ${file}`.quiet().cwd(ROOT).nothrow()
-    : await $`${exe} -list ${file}`.quiet().cwd(ROOT).nothrow();
-  const stderr = result.stderr.toString();
-  if (result.exitCode !== 0) {
+  const args = includeContent ? [exe, file] : [exe, "-list", file];
+  const proc = Bun.spawn(args, { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    proc.kill(9);
+  }, DUMP_TIMEOUT_MS);
+
+  const [stdoutBuf, stderrText] = await Promise.all([
+    new Response(proc.stdout).arrayBuffer(),
+    new Response(proc.stderr).text(),
+  ]);
+  const exitCode = await proc.exited;
+  clearTimeout(timer);
+
+  const stderr = stderrText;
+  if (timedOut) {
+    throw new Error(`${basename(exe)} timed out for ${file} after ${DUMP_TIMEOUT_MS}ms`);
+  }
+  if (exitCode !== 0) {
     throw new Error(`${basename(exe)} failed for ${file}${stderr ? `: ${stderr.trim()}` : ""}`);
   }
 
-  const bytes = new Uint8Array(result.stdout);
+  const bytes = new Uint8Array(stdoutBuf);
   const magic = new TextDecoder().decode(bytes.subarray(0, 9));
   if (magic !== "CHMDUMP1\n") throw new Error(`${basename(exe)} produced invalid dump`);
 
