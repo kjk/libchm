@@ -119,4 +119,6 @@ export async function buildDist() {
 
 if (import.meta.main) {
   await buildDist();
+  const { buildWasm } = await import("./build-wasm");
+  await buildWasm();
 }
