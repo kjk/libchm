@@ -256,6 +256,9 @@ struct chm_ctx {
     struct LZXstate *lzx_state;
     int lzx_last_block;
 
+    uint8_t *dblock_buf;
+    int64_t dblock_idx;
+
     uint64_t dir_page_count;
     uint64_t dir_pages_seen;
     uint32_t dir_seen_bitmap[CHM_DIR_SEEN_BITMAP_WORDS];
@@ -1457,6 +1460,19 @@ static uint8_t* find_in_PMGL(uint8_t* page_buf, uint32_t block_len, const char* 
     return NULL;
 }
 
+static int cmp_counted_ci(const char* name, size_t len, const char* objPath) {
+    for (size_t i = 0; i < len; i++) {
+        unsigned char a = (unsigned char)name[i];
+        unsigned char b = (unsigned char)objPath[i];
+        if (b == '\0') return 1;
+        if (a >= 'A' && a <= 'Z') a = (unsigned char)(a - 'A' + 'a');
+        if (b >= 'A' && b <= 'Z') b = (unsigned char)(b - 'A' + 'a');
+        if (a != b) return a < b ? -1 : 1;
+    }
+
+    return objPath[len] == '\0' ? 0 : -1;
+}
+
 static int32_t find_in_PMGI(uint8_t* page_buf, uint32_t block_len, const char* objPath) {
 
     struct chmPmgiHeader header;
@@ -1476,7 +1492,9 @@ static int32_t find_in_PMGI(uint8_t* page_buf, uint32_t block_len, const char* o
         if (!parse_cword(&cur, end, &strLen)) return -1;
         if (strLen == 0) return -1;
 
-        if (strcasecmp((const char*)cur, objPath) > 0) return page;
+        if ((uint64_t)(end - cur) < strLen) return -1;
+
+        if (cmp_counted_ci((const char*)cur, (size_t)strLen, objPath) > 0) return page;
 
         cur += strLen;
 
@@ -1622,22 +1640,26 @@ static int64_t decompress_block(chm_ctx *ctx, uint64_t block, uint8_t** ubuffer)
         }
     }
 
-    lbuffer = (uint8_t *)chm_alloc(ctx, (size_t)ctx->reset_table.block_len);
-    if (!lbuffer) {
-        chm_free(ctx, cbuffer);
-        return -1;
+    if (!ctx->dblock_buf) {
+        ctx->dblock_buf = (uint8_t *)chm_alloc(ctx, (size_t)ctx->reset_table.block_len);
+        if (!ctx->dblock_buf) {
+            chm_free(ctx, cbuffer);
+            return -1;
+        }
     }
+    lbuffer = ctx->dblock_buf;
+    ctx->dblock_idx = -1;
     *ubuffer = lbuffer;
 
     ok = get_cmpblock_bounds(ctx, block, &cmpStart, &cmpLen);
     if (!ok || cmpLen > cbufferLen || fetch_bytes(ctx, cbuffer, cmpStart, cmpLen) != cmpLen ||
         LZXdecompress(ctx->lzx_state, cbuffer, lbuffer, (int)cmpLen, (int)ctx->reset_table.block_len) != DECR_OK) {
         chm_free(ctx, cbuffer);
-        chm_free(ctx, lbuffer);
         *ubuffer = NULL;
         return (int64_t)0;
     }
     ctx->lzx_last_block = (int)block;
+    ctx->dblock_idx = (int64_t)block;
 
     chm_free(ctx, cbuffer);
     return ctx->reset_table.block_len;
@@ -1660,6 +1682,11 @@ static int64_t decompress_region(chm_ctx *ctx, uint8_t* buf, uint64_t start, int
     nLen = len;
     if (nLen > (ctx->reset_table.block_len - nOffset)) nLen = ctx->reset_table.block_len - nOffset;
 
+    if (ctx->dblock_buf && ctx->dblock_idx == (int64_t)nBlock) {
+        memcpy(buf, ctx->dblock_buf + nOffset, (unsigned int)nLen);
+        return nLen;
+    }
+
     if (!ctx->lzx_state) {
         int window_size = ffs(ctx->window_size) - 1;
         ctx->lzx_last_block = -1;
@@ -1672,12 +1699,11 @@ static int64_t decompress_region(chm_ctx *ctx, uint8_t* buf, uint64_t start, int
 
     gotLen = decompress_block(ctx, nBlock, &ubuffer);
 
-    if (gotLen == (uint64_t)-1) {
+    if (gotLen == (uint64_t)-1 || ubuffer == NULL) {
         return 0;
     }
     if (gotLen < nLen) nLen = gotLen;
     memcpy(buf, ubuffer + nOffset, (unsigned int)nLen);
-    chm_free(ctx, ubuffer);
     return nLen;
 }
 
@@ -1866,6 +1892,10 @@ void chm_close(chm_ctx *ctx)
     if (!ctx) return;
     if (ctx->lzx_state) LZXteardown(ctx->lzx_state);
     ctx->lzx_state = NULL;
+
+    chm_free(ctx, ctx->dblock_buf);
+    ctx->dblock_buf = NULL;
+    ctx->dblock_idx = -1;
 
     if (ctx->entries) {
         for (int i = 0; i < ctx->entry_count; i++) {
