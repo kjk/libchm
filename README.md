@@ -1,12 +1,14 @@
 # libchm — a plain-C CHM reader
 
-This is a CHM / ITSS archive reader, ported and cleaned from CHMLib, in the style of [djvudec](https://github.com/kjk/djvudec).
+This is a CHM / ITSS archive reader, ported and cleaned from [CHMLib](https://github.com/jedwing/CHMLib).
 
 * plain C, no dependencies
+* wasm build to be used in web apps
 * simpler / cleaned API
-* easy to integrate: copy `dist/chm.h` and `dist/chm.c`
+* easy to integrate: copy `dist/chm.h` and `dist/chm.c` to your project (amalgamated build like sqlite)
 * in-memory only (no incremental I/O)
-* fuzzing + amalgamation + wasm support
+* fuzzed for robustness
+* battle tested in [SumatraPDF](https://www.sumatrapdfreader.org/)
 
 ## API
 
@@ -29,9 +31,9 @@ for (int i = 0; i < n; i++) {
 chm_close(ctx);
 ```
 
-## Build & test
+## Dev build & test
 
-Requires `clang` and `bun`.
+For dev, we require bun and use msvc and clang as C compilers.
 
 ```
 bun cmd/build.ts          # builds out/clang/chm_test
@@ -47,7 +49,7 @@ chm_test -list file.chm
 
 ## How it was made
 
-Port of CHMLib (from SumatraPDF's ext/CHMLib) done with Grok Build, cleaned to djvudec coding conventions, with ctx/alloc, amalgam, fuzz, wasm.
+Port of CHMLib (from SumatraPDF's ext/CHMLib) cleaned up coding conventions, with ctx/alloc, amalgamated build, fuzzing, wasm build.
 
 ## License
 
